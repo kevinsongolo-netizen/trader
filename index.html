@@ -1274,7 +1274,7 @@ body::before {
       <button class="nav-tab" data-tab="checklist">Checklist</button>
       <button class="nav-tab" data-tab="journal">Journal</button>
       <button class="nav-tab" data-tab="notes">Notes</button>
-      <button class="nav-tab" data-tab="review">Review</button>
+      <button class="nav-tab" data-tab="review">Review</button><button class="nav-tab" data-tab="ai-insights">AI Insights</button>
     </nav>
     <div class="header-actions" style="display:flex;align-items:center;gap:0.75rem;">
       <button class="btn btn-sm btn-primary" onclick="installPWA()" id="pwa-install-btn" style="display:none;">⬇ Install App</button>
@@ -1359,6 +1359,7 @@ body::before {
             <th>R:R</th>
             <th>POI</th>
             <th>Session</th>
+            <th>Exit Reason</th>
             <th>P&L ($)</th>
             <th>Outcome</th>
             <th>Notes</th>
@@ -1441,6 +1442,12 @@ body::before {
       <div class="review-column" id="session-performance-card">
         <h3><span class="dot" style="background:var(--accent)"></span> Performance by Session</h3>
         <div id="session-performance-container"></div>
+      </div>
+    </div>
+    <div class="review-columns" id="exit-reason-columns" style="margin-bottom:1.5rem;">
+      <div class="review-column" id="exit-reason-performance-card" style="grid-column:1/-1">
+        <h3><span class="dot" style="background:var(--red)"></span> Performance by Exit Reason</h3>
+        <div id="exit-reason-performance-container"></div>
       </div>
     </div>
     <div class="review-columns">
@@ -1557,6 +1564,21 @@ body::before {
             <option value="Other">Other</option>
           </select>
         </div>
+        <div class="form-group">
+          <label class="form-label">Exit Reason</label>
+          <select class="form-select" id="j-exit-reason">
+            <option value="">— Select —</option>
+            <option value="Take Profit Hit">Take Profit Hit</option>
+            <option value="Stop Loss Hit">Stop Loss Hit</option>
+            <option value="Manual Close - Target Reached">Manual Close — Target Reached</option>
+            <option value="Manual Close - Fear/Uncertainty">Manual Close — Fear/Uncertainty</option>
+            <option value="Manual Close - New POI Formed (Lower TF)">Manual Close — New POI Formed (Lower TF)</option>
+            <option value="Manual Close - Structure Break/Invalidation">Manual Close — Structure Break/Invalidation</option>
+            <option value="Manual Close - News Event">Manual Close — News Event</option>
+            <option value="Trailing Stop">Trailing Stop</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
       </div>
       <div class="form-group">
         <label class="form-label">Rules Followed</label>
@@ -1606,6 +1628,12 @@ body::before {
       <div class="form-group">
         <label class="form-label">Additional Notes</label>
         <textarea class="form-textarea" id="j-notes" placeholder="Session, emotions, market context, screenshots..."></textarea>
+      </div>
+      <div class="form-group" style="border-top:1px solid var(--border);padding-top:1rem;margin-top:0.5rem;">
+        <label class="form-label">AI Review (after close)</label>
+        <div style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.5rem;">Add an exit price above, then get a plain-language review of what worked, what went wrong, and the one lesson worth remembering.</div>
+        <button class="btn" onclick="aiRunTradeReview()">Get AI Review</button>
+        <div id="ai-review-output" style="margin-top:0.75rem;"></div>
       </div>
     </div>
     <div class="modal-footer">
@@ -2338,6 +2366,14 @@ function ensureTradeIds(trades) {
       const recomputed = computeRR(t.entry, t.sl, t.tp, t.direction);
       if (recomputed) { t.rr = recomputed; changed = true; }
     }
+    if (!t.exitReason && t.exit && (t.sl || t.tp)) {
+      const detected = detectExitReason(t.exit, t.sl, t.tp);
+      if (detected) { t.exitReason = detected; changed = true; }
+    }
+    if (!t.session && t.openTimeRaw) {
+      const detectedSession = sessionFromHour(extractHour(t.openTimeRaw));
+      if (detectedSession) { t.session = detectedSession; changed = true; }
+    }
   });
   if (changed) saveToStorage('te_journal', state.journal);
 }
@@ -2875,6 +2911,7 @@ function openJournalModal(editId) {
       document.getElementById('j-rr').value = entry.rr || '';
       document.getElementById('j-poi').value = entry.poi || '';
       document.getElementById('j-session').value = entry.session || '';
+      document.getElementById('j-exit-reason').value = entry.exitReason || '';
       document.getElementById('j-rules-followed').value = entry.rulesFollowed || 'all';
       document.getElementById('j-worked').value = entry.worked || '';
       document.getElementById('j-failed').value = entry.failed || '';
@@ -2902,6 +2939,7 @@ function openJournalModal(editId) {
     document.getElementById('j-rr').value = '';
     document.getElementById('j-poi').value = '';
     document.getElementById('j-session').value = '';
+    document.getElementById('j-exit-reason').value = '';
     document.getElementById('j-rules-followed').value = 'all';
     document.getElementById('j-worked').value = '';
     document.getElementById('j-failed').value = '';
@@ -2933,6 +2971,7 @@ function saveJournalEntry() {
   const rr = document.getElementById('j-rr').value.trim();
   const poi = document.getElementById('j-poi').value;
   const session = document.getElementById('j-session').value;
+  const exitReason = document.getElementById('j-exit-reason').value;
   const rulesFollowed = document.getElementById('j-rules-followed').value;
   const worked = document.getElementById('j-worked').value.trim();
   const failed = document.getElementById('j-failed').value.trim();
@@ -2943,7 +2982,7 @@ function saveJournalEntry() {
   if (!date || !pair) { showToast('Please fill in at least the date and pair.', 'error'); return; }
 
   const entryData = { 
-    date, pair, direction, asset, entry, exit, lots, sl, tp, pnl, rr, poi, session,
+    date, pair, direction, asset, entry, exit, lots, sl, tp, pnl, rr, poi, session, exitReason,
     rulesFollowed, worked, failed, notes, workedTags, failedTags 
   };
 
@@ -2981,6 +3020,28 @@ function updatePoiInline(id, value) {
     entry.poi = value;
     saveJournal();
     showToast('POI updated', 'success', 1500);
+  }
+}
+
+// Update Session directly from the journal table, without opening the edit modal
+function updateSessionInline(id, value) {
+  const journal = getCurrentJournal();
+  const entry = journal.find(e => e.id === id);
+  if (entry) {
+    entry.session = value;
+    saveJournal();
+    showToast('Session updated', 'success', 1500);
+  }
+}
+
+// Update Exit Reason directly from the journal table, without opening the edit modal
+function updateExitReasonInline(id, value) {
+  const journal = getCurrentJournal();
+  const entry = journal.find(e => e.id === id);
+  if (entry) {
+    entry.exitReason = value;
+    saveJournal();
+    showToast('Exit reason updated', 'success', 1500);
   }
 }
 
@@ -3035,7 +3096,30 @@ function renderJournal() {
           <option value="Other" ${e.poi === 'Other' ? 'selected' : ''}>Other</option>
         </select>
       </td>
-      <td style="font-size:0.78rem;color:var(--text-secondary)">${e.session || '—'}</td>
+      <td>
+        <select class="form-select" style="font-size:0.75rem;padding:0.3rem 0.5rem;min-width:110px" onchange="updateSessionInline('${e.id}', this.value)">
+          <option value="" ${!e.session ? 'selected' : ''}>— Select —</option>
+          <option value="Asian" ${e.session === 'Asian' ? 'selected' : ''}>Asian</option>
+          <option value="London" ${e.session === 'London' ? 'selected' : ''}>London</option>
+          <option value="New York" ${e.session === 'New York' ? 'selected' : ''}>New York</option>
+          <option value="London/NY Overlap" ${e.session === 'London/NY Overlap' ? 'selected' : ''}>London/NY Overlap</option>
+          <option value="Other" ${e.session === 'Other' ? 'selected' : ''}>Other</option>
+        </select>
+      </td>
+      <td>
+        <select class="form-select" style="font-size:0.75rem;padding:0.3rem 0.5rem;min-width:150px" onchange="updateExitReasonInline('${e.id}', this.value)">
+          <option value="" ${!e.exitReason ? 'selected' : ''}>— Select —</option>
+          <option value="Take Profit Hit" ${e.exitReason === 'Take Profit Hit' ? 'selected' : ''}>Take Profit Hit</option>
+          <option value="Stop Loss Hit" ${e.exitReason === 'Stop Loss Hit' ? 'selected' : ''}>Stop Loss Hit</option>
+          <option value="Manual Close - Target Reached" ${e.exitReason === 'Manual Close - Target Reached' ? 'selected' : ''}>Manual Close — Target Reached</option>
+          <option value="Manual Close - Fear/Uncertainty" ${e.exitReason === 'Manual Close - Fear/Uncertainty' ? 'selected' : ''}>Manual Close — Fear/Uncertainty</option>
+          <option value="Manual Close - New POI Formed (Lower TF)" ${e.exitReason === 'Manual Close - New POI Formed (Lower TF)' ? 'selected' : ''}>Manual Close — New POI (Lower TF)</option>
+          <option value="Manual Close - Structure Break/Invalidation" ${e.exitReason === 'Manual Close - Structure Break/Invalidation' ? 'selected' : ''}>Manual Close — Structure Break</option>
+          <option value="Manual Close - News Event" ${e.exitReason === 'Manual Close - News Event' ? 'selected' : ''}>Manual Close — News Event</option>
+          <option value="Trailing Stop" ${e.exitReason === 'Trailing Stop' ? 'selected' : ''}>Trailing Stop</option>
+          <option value="Other" ${e.exitReason === 'Other' ? 'selected' : ''}>Other</option>
+        </select>
+      </td>
       <td class="${pnlClass}" style="font-weight:700">${pnlStr}</td>
       <td><span class="outcome-tag ${outcome}">${outcomeLabel}</span></td>
       <td class="notes-cell" title="${escapeHtml(notes)}">${escapeHtml(notes)}</td>
@@ -3153,6 +3237,7 @@ function renderReview() {
     document.getElementById('day-performance-container').innerHTML = '<div style="color:var(--text-muted);font-family:\'DM Mono\',monospace;font-size:0.8rem;">No data yet.</div>';
     document.getElementById('poi-performance-container').innerHTML = '<div style="color:var(--text-muted);font-family:\'DM Mono\',monospace;font-size:0.8rem;">No data yet.</div>';
     document.getElementById('session-performance-container').innerHTML = '<div style="color:var(--text-muted);font-family:\'DM Mono\',monospace;font-size:0.8rem;">No data yet.</div>';
+    document.getElementById('exit-reason-performance-container').innerHTML = '<div style="color:var(--text-muted);font-family:\'DM Mono\',monospace;font-size:0.8rem;">No data yet.</div>';
     return;
   }
 
@@ -3271,6 +3356,7 @@ function renderReview() {
   renderDayOfWeekPerformance(entries);
   renderGroupPerformance(entries, 'poi-performance-container', e => e.poi, 'Not tagged');
   renderGroupPerformance(entries, 'session-performance-container', e => e.session, 'Not tagged');
+  renderGroupPerformance(entries, 'exit-reason-performance-container', e => e.exitReason, 'Not tagged');
 }
 
 // === Equity curve (SVG line chart of cumulative P&L) ===
@@ -3617,6 +3703,18 @@ function sessionFromHour(hour) {
   return 'Asian';
 }
 
+// Auto-detect exit reason on import by comparing the actual exit price to recorded SL/TP
+// (small tolerance for slippage). Anything else is left blank for you to tag manually -
+// only you know if it was closed on fear, a new POI, structure break, etc.
+function detectExitReason(exit, sl, tp) {
+  const ex = parseFloat(exit), s = parseFloat(sl), t = parseFloat(tp);
+  if (!ex) return '';
+  const tolerance = 0.0015; // ~0.15% price tolerance for slippage
+  if (t && Math.abs(ex - t) / t <= tolerance) return 'Take Profit Hit';
+  if (s && Math.abs(ex - s) / s <= tolerance) return 'Stop Loss Hit';
+  return '';
+}
+
 function parseExcelData(jsonData) {
   const trades = [];
   
@@ -3698,6 +3796,8 @@ function parseExcelData(jsonData) {
         rr: computeRR(entry, sl, tp, type === 'buy' ? 'buy' : 'sell'),
         poi: '',
         session: sessionFromHour(extractHour(openTime)),
+        openTimeRaw: openTime ? openTime.toString() : '',
+        exitReason: detectExitReason(exit, sl, tp),
         rulesFollowed: 'all',
         worked: '',
         failed: '',
@@ -3996,6 +4096,8 @@ function parseMarkdownTable(text) {
         rr: computeRR(openPrice, cleanSL, cleanTP, type === 'buy' ? 'buy' : 'sell'),
         poi: '',
         session: sessionFromHour(extractHour(timeOpen)),
+        openTimeRaw: timeOpen || '',
+        exitReason: detectExitReason(closePrice, cleanSL, cleanTP),
         rulesFollowed: 'all',
         worked: '',
         failed: '',
@@ -4142,6 +4244,8 @@ function parseTradeParts(parts) {
       rr: computeRR(entry, sl, tp, direction),
       poi: '',
       session: sessionFromHour(extractHour(date)),
+      openTimeRaw: date || '',
+      exitReason: detectExitReason(exit, sl, tp),
       rulesFollowed: 'all',
       worked: '',
       failed: '',
@@ -4349,5 +4453,1344 @@ if ('serviceWorker' in navigator) {
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e1781791509496" integrity="sha512-ZE9pZaUXND66v380QUtch/5sE9tPFh2zg45pR2PB0CVkCtOREv2AJKkSidISWkysEuQ0EH8faUU5du78bx87UQ==" data-cf-beacon='{"version":"2024.11.0","token":"75124c326cb447fe934cde04713ae013","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e1781791509496" integrity="sha512-ZE9pZaUXND66v380QUtch/5sE9tPFh2zg45pR2PB0CVkCtOREv2AJKkSidISWkysEuQ0EH8faUU5du78bx87UQ==" data-cf-beacon='{"version":"2024.11.0","token":"75124c326cb447fe934cde04713ae013","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e1781791509496" integrity="sha512-ZE9pZaUXND66v380QUtch/5sE9tPFh2zg45pR2PB0CVkCtOREv2AJKkSidISWkysEuQ0EH8faUU5du78bx87UQ==" data-cf-beacon='{"version":"2024.11.0","token":"75124c326cb447fe934cde04713ae013","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
-</body>
-</html>
+<div class="tab-content" id="tab-ai-insights">
+  <div class="section-header">
+    <div>
+      <h2 class="section-title">AI Insights</h2>
+      <p class="section-desc">Powered by your TradeEdge AI backend — scoring, coaching, and pre-trade analysis.</p>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:1.5rem;">
+    <div class="form-group">
+      <label class="form-label">Backend URL</label>
+      <div style="display:flex;gap:0.5rem;">
+        <input type="text" class="form-input" id="ai-api-base-input" placeholder="https://your-app.onrender.com">
+        <button class="btn btn-primary" onclick="aiSaveApiBase()">Save</button>
+      </div>
+    </div>
+    <button class="btn" onclick="aiSyncTrades()">Sync my trades to AI backend</button>
+    <span id="ai-sync-status" style="margin-left:0.75rem;font-size:0.82rem;color:var(--text-secondary)"></span>
+
+    <div style="border-top:1px solid var(--border);margin-top:1rem;padding-top:1rem;">
+      <div style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:0.6rem;">Auto-journal from MT5 (<code>TradeEdgeAutoJournal.mq5</code>): pulls in trades your MT5 EA has opened/closed automatically -- you still fill in rules/tags/notes yourself afterward.</div>
+      <button class="btn btn-primary" onclick="aiImportMt5Trades()">Check for new trades</button>
+      <label style="display:inline-flex;align-items:center;gap:0.5rem;font-size:0.85rem;color:var(--text-secondary);cursor:pointer;margin-left:1rem;">
+        <input type="checkbox" id="ai-mt5-import-autocheck"> Auto-check every 60 seconds
+      </label>
+      <span id="ai-mt5-import-status" style="margin-left:0.75rem;font-size:0.82rem;color:var(--text-secondary)"></span>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:1.5rem;">
+    <h3 style="margin-bottom:1rem;">Coach Deep Dive</h3>
+    <button class="btn" onclick="aiLoadCoach()">Load insights</button>
+    <div id="ai-coach-output" style="margin-top:1rem;"></div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-bottom:1rem;">Pre-Trade Check</h3>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Pair</label><input type="text" class="form-input" id="ai-pt-pair" placeholder="EURUSD" list="ai-ca-pair-list" autocomplete="off"></div>
+      <div class="form-group"><label class="form-label">Direction</label>
+        <select class="form-select" id="ai-pt-direction"><option value="buy">Buy</option><option value="sell">Sell</option></select>
+      </div>
+      <div class="form-group"><label class="form-label">Planned R:R</label><input type="number" step="any" class="form-input" id="ai-pt-rr" placeholder="2.0"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">H4 Trend</label>
+        <select class="form-select" id="ai-pt-h4trend"><option value="">— Select —</option><option value="Bullish">Bullish</option><option value="Bearish">Bearish</option><option value="Ranging">Ranging</option></select>
+      </div>
+      <div class="form-group"><label class="form-label">Confidence %</label><input type="number" min="0" max="100" step="any" class="form-input" id="ai-pt-confidence" placeholder="80"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group" style="display:flex;align-items:center;gap:0.5rem;margin-top:1.6rem;">
+        <input type="checkbox" id="ai-pt-bos" style="width:auto;">
+        <label class="form-label" style="margin:0;text-transform:none;letter-spacing:normal;">Break of structure (BOS) confirmed</label>
+      </div>
+      <div class="form-group" style="display:flex;align-items:center;gap:0.5rem;margin-top:1.6rem;">
+        <input type="checkbox" id="ai-pt-sweep" style="width:auto;">
+        <label class="form-label" style="margin:0;text-transform:none;letter-spacing:normal;">Liquidity sweep occurred</label>
+      </div>
+    </div>
+    <button class="btn btn-primary" onclick="aiRunPretrade()">Check this trade</button>
+    <div id="ai-pretrade-output" style="margin-top:1rem;"></div>
+  </div>
+
+  <div class="card" style="margin-top:1.5rem;">
+    <h3 style="margin-bottom:0.25rem;">Chart Analysis Engine</h3>
+    <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem;">Reads a chart (screenshot or price data), validates it against your SMC rules, and explains the reasoning behind every call.</p>
+
+    <div class="form-row" style="margin-bottom:0.75rem;">
+      <div class="form-group" style="display:flex;align-items:center;gap:1.5rem;">
+        <label style="display:flex;align-items:center;gap:0.4rem;font-weight:normal;text-transform:none;letter-spacing:normal;">
+          <input type="radio" name="ai-ca-mode" value="image" id="ai-ca-mode-image" checked style="width:auto;"> Chart screenshot
+        </label>
+        <label style="display:flex;align-items:center;gap:0.4rem;font-weight:normal;text-transform:none;letter-spacing:normal;">
+          <input type="radio" name="ai-ca-mode" value="candles" id="ai-ca-mode-candles" style="width:auto;"> Paste candle data
+        </label>
+        <label style="display:flex;align-items:center;gap:0.4rem;font-weight:normal;text-transform:none;letter-spacing:normal;">
+          <input type="radio" name="ai-ca-mode" value="live" id="ai-ca-mode-live" style="width:auto;"> Live feed (from MT5)
+        </label>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Pair / Instrument (used when saving to journal)</label>
+      <input type="text" class="form-input" id="ai-ca-pair" placeholder="e.g. GER40Cash, EURUSD, BTCUSD" list="ai-ca-pair-list" autocomplete="off">
+      <datalist id="ai-ca-pair-list">
+        <option value="GBPUSD"></option>
+        <option value="EURUSD"></option>
+        <option value="USDCAD"></option>
+        <option value="AUDUSD"></option>
+        <option value="NZDUSD"></option>
+        <option value="GBPJPY"></option>
+        <option value="GOLD"></option>
+        <option value="US100Cash"></option>
+        <option value="US30Cash"></option>
+        <option value="GER40Cash"></option>
+        <option value="BTCUSD"></option>
+      </datalist>
+    </div>
+
+    <div id="ai-ca-image-input">
+      <div class="form-group">
+        <label class="form-label">Chart screenshot (PNG/JPEG/WEBP, max 8MB)</label>
+        <input type="file" class="form-input" id="ai-ca-file" accept="image/png,image/jpeg,image/webp">
+      </div>
+    </div>
+
+    <div id="ai-ca-candles-input" style="display:none;">
+      <div class="form-group">
+        <label class="form-label">Candle data (e.g. H4) — one bar per line: time,open,high,low,close</label>
+        <textarea class="form-input" id="ai-ca-candles" rows="6" placeholder="2024-01-01T00:00,1.0950,1.0965,1.0940,1.0960&#10;2024-01-01T01:00,1.0960,1.0975,1.0955,1.0970"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">M15 candle data (optional — enables automatic multi-timeframe confirmation)</label>
+        <textarea class="form-input" id="ai-ca-m15-candles" rows="4" placeholder="Optional: paste M15 candles in the same format to auto-check BOS/CHOCH/entry confirmation instead of the checkboxes below."></textarea>
+      </div>
+    </div>
+
+    <div id="ai-ca-live-input" style="display:none;">
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Symbol (as set in your MT5 EA)</label>
+          <input type="text" class="form-input" id="ai-live-symbol" placeholder="e.g. EURUSD, GER40Cash" list="ai-live-symbol-list" autocomplete="off">
+          <datalist id="ai-live-symbol-list">
+            <option value="GBPUSD"></option>
+            <option value="EURUSD"></option>
+            <option value="USDCAD"></option>
+            <option value="AUDUSD"></option>
+            <option value="NZDUSD"></option>
+            <option value="GBPJPY"></option>
+            <option value="GOLD"></option>
+            <option value="US100Cash"></option>
+            <option value="US30Cash"></option>
+            <option value="GER40Cash"></option>
+          </datalist>
+        </div>
+        <div class="form-group"><label class="form-label">Timeframe</label>
+          <input type="text" class="form-input" id="ai-live-timeframe" placeholder="e.g. H4" list="ai-live-timeframe-list" autocomplete="off">
+          <datalist id="ai-live-timeframe-list">
+            <option value="M15"></option>
+            <option value="M30"></option>
+            <option value="H1"></option>
+            <option value="H4"></option>
+            <option value="D1"></option>
+          </datalist>
+        </div>
+      </div>
+      <div class="form-group" style="display:flex;align-items:center;gap:0.5rem;">
+        <input type="checkbox" id="ai-live-autorefresh" style="width:auto;"><label class="form-label" style="margin:0;text-transform:none;letter-spacing:normal;">Auto-refresh every 30 seconds</label>
+      </div>
+      <div id="ai-live-status" style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.5rem;">Requires the MT5 EA to be running and pushing data — see the setup guide.</div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Direction</label>
+        <select class="form-select" id="ai-ca-direction"><option value="">Auto (use chart bias)</option><option value="buy">Buy</option><option value="sell">Sell</option></select>
+      </div>
+      <div class="form-group"><label class="form-label">Planned R:R</label><input type="number" step="any" class="form-input" id="ai-ca-rr" placeholder="2.0"></div>
+      <div class="form-group"><label class="form-label">Min R:R required</label><input type="number" step="any" class="form-input" id="ai-ca-minrr" placeholder="2.0"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group" style="display:flex;align-items:center;gap:0.5rem;">
+        <input type="checkbox" id="ai-ca-m15bos" style="width:auto;"><label class="form-label" style="margin:0;text-transform:none;letter-spacing:normal;">M15 BOS confirmed</label>
+      </div>
+      <div class="form-group" style="display:flex;align-items:center;gap:0.5rem;">
+        <input type="checkbox" id="ai-ca-m15choch" style="width:auto;"><label class="form-label" style="margin:0;text-transform:none;letter-spacing:normal;">M15 CHOCH confirmed</label>
+      </div>
+      <div class="form-group" style="display:flex;align-items:center;gap:0.5rem;">
+        <input type="checkbox" id="ai-ca-m15entry" style="width:auto;"><label class="form-label" style="margin:0;text-transform:none;letter-spacing:normal;">M15 entry confirmation</label>
+      </div>
+      <div class="form-group" style="display:flex;align-items:center;gap:0.5rem;">
+        <input type="checkbox" id="ai-ca-sweep" style="width:auto;"><label class="form-label" style="margin:0;text-transform:none;letter-spacing:normal;">Liquidity sweep occurred</label>
+      </div>
+    </div>
+
+    <button class="btn btn-primary" onclick="aiRunChartAnalysis()">Analyze chart</button>
+    <div id="ai-ca-error" style="margin-top:0.75rem;color:var(--red);font-size:0.85rem;"></div>
+
+    <div id="ai-ca-results" style="margin-top:1.25rem;display:none;">
+      <div class="card" style="margin-bottom:1rem;">
+        <h4 style="margin-bottom:0.75rem;">Chart Analysis</h4>
+        <div id="ai-ca-analysis-output"></div>
+      </div>
+      <div class="card" style="margin-bottom:1rem;">
+        <h4 style="margin-bottom:0.75rem;">Trade Validation</h4>
+        <div id="ai-ca-validation-output"></div>
+      </div>
+      <div class="card" style="margin-bottom:1rem;" id="ai-ca-mtf-card">
+        <h4 style="margin-bottom:0.75rem;">Multi-Timeframe Confirmation</h4>
+        <div id="ai-ca-mtf-output"></div>
+      </div>
+      <div class="card" style="margin-bottom:1rem;">
+        <h4 style="margin-bottom:0.75rem;">AI Coach</h4>
+        <div id="ai-ca-coach-output"></div>
+      </div>
+      <div class="card" style="margin-bottom:1rem;">
+        <h4 style="margin-bottom:0.75rem;">Confidence Meter</h4>
+        <div id="ai-ca-confidence-output"></div>
+      </div>
+      <button class="btn btn-primary" onclick="aiSaveChartAnalysisToJournal()">Save this trade to journal</button>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1.5rem;">
+    <h3 style="margin-bottom:0.25rem;">Position Size Calculator</h3>
+    <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem;">Risk-based lot sizing — works for forex, indices, metals, or crypto. Run a Chart Analysis above first and click "Use these levels" to auto-fill entry/SL/TP.</p>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Account Balance</label><input type="number" step="any" class="form-input" id="ai-ps-balance" placeholder="1000"></div>
+      <div class="form-group"><label class="form-label">Risk %</label><input type="number" step="any" class="form-input" id="ai-ps-risk-percent" placeholder="1.0"></div>
+      <div class="form-group"><label class="form-label">Or Risk $ (overrides %)</label><input type="number" step="any" class="form-input" id="ai-ps-risk-amount" placeholder="optional"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Entry</label><input type="number" step="any" class="form-input" id="ai-ps-entry" placeholder="0.00"></div>
+      <div class="form-group"><label class="form-label">Stop Loss</label><input type="number" step="any" class="form-input" id="ai-ps-sl" placeholder="0.00"></div>
+      <div class="form-group"><label class="form-label">Take Profit (optional)</label><input type="number" step="any" class="form-input" id="ai-ps-tp" placeholder="0.00"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Value per point per lot</label><input type="number" step="any" class="form-input" id="ai-ps-vpp" placeholder="e.g. 10"></div>
+      <div class="form-group"><label class="form-label">Lot step</label><input type="number" step="any" class="form-input" id="ai-ps-lotstep" placeholder="0.01" value="0.01"></div>
+    </div>
+    <div style="font-size:0.76rem;color:var(--text-muted);margin-bottom:1rem;">"Value per point per lot" = how much a 1.00 lot position moves in your account currency per 1.0 unit of price change. Check your broker's symbol specification (MT5: right-click a symbol in Market Watch → Specification → "Tick value").</div>
+    <button class="btn btn-primary" onclick="aiRunPositionSize()">Calculate position size</button>
+    <div id="ai-ps-error" style="margin-top:0.75rem;color:var(--red);font-size:0.85rem;"></div>
+    <div id="ai-ps-output" style="margin-top:1rem;"></div>
+  </div>
+
+  <div class="card" style="margin-top:1.5rem;">
+    <h3 style="margin-bottom:0.25rem;">Session &amp; News Check</h3>
+    <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem;">Trading session auto-detection and a high-impact news filter for your planned trade time.</p>
+    <button class="btn" onclick="aiRunSessionDetect()">Detect current session</button>
+    <div id="ai-session-output" style="margin-top:0.75rem;"></div>
+
+    <div style="border-top:1px solid var(--border);margin:1.25rem 0;padding-top:1rem;">
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Planned Trade Time (your local time)</label><input type="datetime-local" class="form-input" id="ai-news-time"></div>
+        <div class="form-group"><label class="form-label">Buffer (minutes)</label><input type="number" step="any" class="form-input" id="ai-news-buffer" placeholder="60" value="60"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Currencies (optional, comma-separated)</label><input type="text" class="form-input" id="ai-news-currencies" placeholder="USD, EUR"></div>
+        <div class="form-group"><label class="form-label">Minimum impact</label>
+          <select class="form-select" id="ai-news-min-impact"><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select>
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="aiRunNewsCheck()">Check for news</button>
+      <div id="ai-news-error" style="margin-top:0.75rem;color:var(--red);font-size:0.85rem;"></div>
+      <div id="ai-news-output" style="margin-top:0.75rem;"></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1.5rem;">
+    <h3 style="margin-bottom:0.25rem;">Backtest</h3>
+    <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem;">Replays your SMC rules against historical candle data to see how they would have performed. Paste a longer series (50+ candles) for a meaningful sample — no AI, just your existing rules run automatically over the past.</p>
+    <div class="form-group">
+      <label class="form-label">Candle data — one bar per line: time,open,high,low,close</label>
+      <textarea class="form-input" id="ai-bt-candles" rows="8" placeholder="Paste 50+ candles here, oldest first."></textarea>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Lookback window</label><input type="number" step="1" class="form-input" id="ai-bt-lookback" placeholder="100" value="100"></div>
+      <div class="form-group"><label class="form-label">Min R:R required</label><input type="number" step="any" class="form-input" id="ai-bt-minrr" placeholder="2.0" value="2.0"></div>
+      <div class="form-group"><label class="form-label">Direction</label>
+        <select class="form-select" id="ai-bt-direction"><option value="">Auto (use chart bias)</option><option value="buy">Buy only</option><option value="sell">Sell only</option></select>
+      </div>
+    </div>
+    <button class="btn btn-primary" onclick="aiRunBacktest()">Run backtest</button>
+    <div id="ai-bt-error" style="margin-top:0.75rem;color:var(--red);font-size:0.85rem;"></div>
+    <div id="ai-bt-output" style="margin-top:1rem;"></div>
+  </div>
+
+  <div class="card" style="margin-top:1.5rem;">
+    <h3 style="margin-bottom:0.25rem;">AI Confidence Model (Machine Learning)</h3>
+    <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem;">Learns win/loss patterns from your own logged trade history and powers the win-probability shown in Pre-Trade Check. Needs a real sample of closed trades first &mdash; this card will always tell you honestly whether it's ready, never guess with too little data.</p>
+    <button class="btn" onclick="aiCheckMlReadiness()">Check my trade data</button>
+    <button class="btn btn-primary" onclick="aiTrainMlModel()">Train model</button>
+    <div id="ai-ml-readiness" style="margin-top:0.75rem;"></div>
+    <div id="ai-ml-error" style="margin-top:0.75rem;color:var(--red);font-size:0.85rem;"></div>
+    <div id="ai-ml-train-output" style="margin-top:0.75rem;"></div>
+    <div style="border-top:1px solid var(--border);margin-top:1rem;padding-top:0.75rem;">
+      <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:0.25rem;">Current active model</div>
+      <div id="ai-ml-active" style="font-size:0.85rem;">Loading...</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1.5rem;">
+    <h3 style="margin-bottom:0.25rem;">Live Opportunity Scanner</h3>
+    <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem;">Watches every symbol/timeframe you have an MT5 EA running on and tells you the moment any of them has a VALID setup &mdash; no more flipping between charts one at a time. Requires the Live MT5 Feed EA to already be attached and pushing for each asset you add here.</p>
+
+    <div class="form-row" style="align-items:end;">
+      <div class="form-group" style="margin-bottom:0;"><label class="form-label">Symbol</label>
+        <input type="text" class="form-input" id="ai-scan-add-symbol" placeholder="e.g. GBPUSD" list="ai-live-symbol-list" autocomplete="off">
+      </div>
+      <div class="form-group" style="margin-bottom:0;"><label class="form-label">Timeframe</label>
+        <input type="text" class="form-input" id="ai-scan-add-timeframe" placeholder="e.g. H4" list="ai-live-timeframe-list" autocomplete="off">
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <button class="btn btn-primary" onclick="aiScannerAdd()">Add to scanner</button>
+      </div>
+    </div>
+
+    <div id="ai-scan-list" style="margin-top:1rem;"></div>
+
+    <div style="display:flex;align-items:center;gap:1rem;margin-top:1rem;flex-wrap:wrap;">
+      <button class="btn btn-primary" onclick="aiScannerScanNow()">Scan now</button>
+      <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.85rem;color:var(--text-secondary);cursor:pointer;">
+        <input type="checkbox" id="ai-scan-autorefresh"> Auto-scan every 30 seconds
+      </label>
+      <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.85rem;color:var(--text-secondary);cursor:pointer;">
+        <input type="checkbox" id="ai-scan-notify"> Pop a browser notification on a new VALID setup
+      </label>
+    </div>
+    <div id="ai-scan-status" style="margin-top:0.5rem;font-size:0.78rem;color:var(--text-muted);"></div>
+    <div id="ai-scan-results" style="margin-top:1rem;"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const STORAGE_KEY = 'te_ai_backend_url';
+  let lastChartAnalysisResult = null;
+  let liveAutoRefreshTimer = null;
+
+  function getApiBase() {
+    return localStorage.getItem(STORAGE_KEY) || '';
+  }
+  function setApiBase(url) {
+    localStorage.setItem(STORAGE_KEY, url.replace(/\/$/, ''));
+  }
+
+  function numOrNull(v) {
+    const n = parseFloat(v);
+    return isNaN(n) ? null : n;
+  }
+
+  function toBackendTrade(t) {
+    return {
+      id: t.id,
+      date: t.date || null,
+      pair: t.pair || null,
+      direction: t.direction || null,
+      asset: t.asset || null,
+      entry: numOrNull(t.entry),
+      exit: numOrNull(t.exit),
+      sl: numOrNull(t.sl),
+      tp: numOrNull(t.tp),
+      lots: numOrNull(t.lots),
+      pnl: numOrNull(t.pnl),
+      rr: numOrNull(t.rr),
+      h4PoiType: t.poi || null,
+      session: t.session || null,
+      exitReason: t.exitReason || null,
+      rulesFollowed: t.rulesFollowed || null,
+      notes: t.notes || null,
+      worked: t.worked || null,
+      failed: t.failed || null,
+      workedTags: t.workedTags || [],
+      failedTags: t.failedTags || [],
+    };
+  }
+
+  async function apiFetch(path, opts = {}) {
+    const base = getApiBase();
+    if (!base) throw new Error('Set your backend URL above first.');
+    const res = await fetch(base + path, {
+      ...opts,
+      headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(res.status + ': ' + text.slice(0, 200));
+    }
+    return res.json();
+  }
+
+  function escapeHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s ?? '';
+    return d.innerHTML;
+  }
+
+  async function syncTradesToBackend() {
+    const statusEl = document.getElementById('ai-sync-status');
+    let trades;
+    try {
+      trades = getCurrentJournal();
+    } catch (e) {
+      statusEl.textContent = 'Could not read your journal (unexpected app state).';
+      return;
+    }
+    statusEl.textContent = 'Syncing ' + trades.length + ' trades...';
+    let ok = 0, fail = 0;
+    for (const t of trades) {
+      try {
+        await apiFetch('/api/v1/trades', { method: 'POST', body: JSON.stringify(toBackendTrade(t)) });
+        ok++;
+      } catch (e) {
+        fail++;
+        console.error('AI sync failed for trade', t.id, e);
+      }
+    }
+    statusEl.textContent = 'Synced ' + ok + ' trades' + (fail ? (', ' + fail + ' failed (see browser console)') : '') + '.';
+  }
+
+  // === Sprint 17: import auto-journaled MT5 trades =======================
+  // TradeEdgeAutoJournal.mq5 posts trade open/close events straight to
+  // POST /api/v1/trades (the AI backend's own copy of trade data), using
+  // ids like "mt5-{account}-{positionId}". Those never automatically flow
+  // into the website's own journal (which lives in localStorage/Supabase,
+  // a separate store -- see toBackendTrade() for the one-way "push local
+  // trades up to the backend" direction already built). This function is
+  // the missing "pull" direction: fetch anything with an "mt5-" id and
+  // merge it into the local journal.
+  let mt5ImportAutoTimer = null;
+
+  async function importMt5Trades() {
+    const statusEl = document.getElementById('ai-mt5-import-status');
+    if (!statusEl) return;
+    statusEl.textContent = 'Checking for new trades...';
+    try {
+      const data = await apiFetch('/api/v1/trades?limit=500');
+      const items = (data.items || []).filter(function (t) {
+        return t.id && t.id.indexOf('mt5-') === 0;
+      });
+      if (!items.length) {
+        statusEl.textContent = 'No MT5-linked trades found yet -- make sure TradeEdgeAutoJournal.mq5 is attached and you have at least one trade opened/closed.';
+        return;
+      }
+
+      let journal;
+      try {
+        journal = getCurrentJournal();
+      } catch (e) {
+        statusEl.textContent = 'Could not read your journal (unexpected app state).';
+        return;
+      }
+
+      let added = 0, updated = 0;
+      items.forEach(function (t) {
+        const idx = journal.findIndex(function (j) { return j.id === t.id; });
+        const fields = {
+          date: t.date, pair: t.pair, direction: t.direction, asset: t.asset,
+          entry: t.entry, exit: t.exit, sl: t.sl, tp: t.tp, lots: t.lots,
+          pnl: t.pnl, rr: t.rr, poi: t.h4PoiType, session: t.session,
+          exitReason: t.exitReason,
+        };
+        if (idx >= 0) {
+          // Merge, not replace -- never blank out notes/tags/rules the
+          // user already filled in manually on this entry.
+          const existing = journal[idx];
+          Object.keys(fields).forEach(function (k) {
+            if (fields[k] !== null && fields[k] !== undefined) existing[k] = fields[k];
+          });
+          updated++;
+        } else {
+          journal.unshift(Object.assign({ id: t.id, workedTags: [], failedTags: [] }, fields));
+          added++;
+        }
+      });
+
+      if (typeof saveJournal === 'function') saveJournal();
+      if (typeof renderJournal === 'function') renderJournal();
+
+      statusEl.textContent = added + ' new, ' + updated + ' updated (of ' + items.length + ' MT5-linked trades checked).';
+      if (added > 0 && typeof showToast === 'function') {
+        showToast(added + ' new trade' + (added === 1 ? '' : 's') + ' imported from MT5.', 'success');
+      }
+    } catch (e) {
+      statusEl.textContent = 'Error: ' + e.message;
+    }
+  }
+
+  function startMt5ImportAutoCheck() {
+    stopMt5ImportAutoCheck();
+    importMt5Trades();
+    mt5ImportAutoTimer = setInterval(importMt5Trades, 60000);
+  }
+  function stopMt5ImportAutoCheck() {
+    if (mt5ImportAutoTimer) {
+      clearInterval(mt5ImportAutoTimer);
+      mt5ImportAutoTimer = null;
+    }
+  }
+
+  async function loadCoachDeepDive() {
+    const el = document.getElementById('ai-coach-output');
+    el.textContent = 'Loading...';
+    try {
+      const data = await apiFetch('/api/v1/coach/deep-dive');
+      el.innerHTML =
+        '<div class="review-item"><strong>Why you\'re losing:</strong> ' + escapeHtml(data.whyLosing) + '</div>' +
+        '<div class="review-item"><strong>Why you\'re winning:</strong> ' + escapeHtml(data.whyWinning) + '</div>' +
+        (data.bestSetup ? '<div class="review-item"><strong>Best setup:</strong> ' + escapeHtml(data.bestSetup.key) + ' — ' + Math.round(data.bestSetup.winRate) + '% win rate over ' + data.bestSetup.count + ' trades</div>' : '') +
+        (data.worstSetup ? '<div class="review-item"><strong>Worst setup:</strong> ' + escapeHtml(data.worstSetup.key) + ' — ' + Math.round(data.worstSetup.winRate) + '% win rate over ' + data.worstSetup.count + ' trades</div>' : '') +
+        (data.worstDayToTrade ? '<div class="review-item"><strong>Worst day to trade:</strong> ' + escapeHtml(data.worstDayToTrade.key) + '</div>' : '') +
+        (data.bestSession ? '<div class="review-item"><strong>Best session:</strong> ' + escapeHtml(data.bestSession.key) + '</div>' : '') +
+        (data.pairToStopTrading ? '<div class="review-item"><strong>Consider dropping:</strong> ' + escapeHtml(data.pairToStopTrading.key) + '</div>' : '') +
+        '<div class="review-item" style="color:var(--text-muted);font-size:0.78rem;">Based on ' + data.sampleSize + ' synced trades.</div>';
+    } catch (e) {
+      el.textContent = 'Error: ' + e.message;
+    }
+  }
+
+  async function runPretradeCheck() {
+    const el = document.getElementById('ai-pretrade-output');
+    const pair = document.getElementById('ai-pt-pair').value.trim();
+    const direction = document.getElementById('ai-pt-direction').value;
+    const rr = parseFloat(document.getElementById('ai-pt-rr').value);
+    const h4Trend = document.getElementById('ai-pt-h4trend').value;
+    const confidence = parseFloat(document.getElementById('ai-pt-confidence').value);
+    const hasBos = document.getElementById('ai-pt-bos').checked;
+    const hasLiquiditySweep = document.getElementById('ai-pt-sweep').checked;
+    if (!pair) { el.textContent = 'Enter a pair first.'; return; }
+    el.textContent = 'Checking...';
+    try {
+      const body = {
+        pair: pair,
+        direction: direction,
+        plannedRR: isNaN(rr) ? null : rr,
+        h4Trend: h4Trend || null,
+        confidence: isNaN(confidence) ? null : confidence,
+        hasBos: hasBos,
+        hasLiquiditySweep: hasLiquiditySweep,
+      };
+      const data = await apiFetch('/api/v1/assistant/pretrade-analysis', { method: 'POST', body: JSON.stringify(body) });
+      const mlLine = data.mlAvailable
+        ? '<div class="review-item" style="font-size:0.78rem;color:var(--text-muted);">ML-powered · model ' + escapeHtml(data.modelVersion || '?') + ' (' + escapeHtml(data.algorithm || '') + ')' + (data.winProbability != null ? ' · win probability ' + (data.winProbability * 100).toFixed(0) + '%' : '') + '</div>'
+        : '<div class="review-item" style="font-size:0.78rem;color:var(--text-muted);">Rule-based estimate only (no trained ML model yet) &mdash; see "AI Confidence Model" below to train one.</div>';
+      el.innerHTML =
+        '<div class="review-item"><strong>Recommendation: ' + escapeHtml(data.recommendation) + '</strong><br>' +
+        'Quality score: ' + (data.tradeQualityScore ?? '—') + ' · Risk: ' + escapeHtml(data.riskLevel) + ' · Confidence: ' + escapeHtml(data.aiConfidence) + '</div>' +
+        mlLine +
+        (data.strengths.length ? '<div class="review-item" style="color:var(--green)">✓ ' + data.strengths.map(escapeHtml).join('<br>✓ ') + '</div>' : '') +
+        (data.weaknesses.length ? '<div class="review-item" style="color:var(--red)">✗ ' + data.weaknesses.map(escapeHtml).join('<br>✗ ') + '</div>' : '');
+    } catch (e) {
+      el.textContent = 'Error: ' + e.message;
+    }
+  }
+
+  async function apiFetchMultipart(path, opts = {}) {
+    const base = getApiBase();
+    if (!base) throw new Error('Set your backend URL above first.');
+    const res = await fetch(base + path, opts);
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(res.status + ': ' + text.slice(0, 200));
+    }
+    return res.json();
+  }
+
+  function confidenceColor(score) {
+    if (score >= 70) return 'var(--green)';
+    if (score >= 40) return '#e0a800';
+    return 'var(--red)';
+  }
+
+  function confidenceBar(label, score) {
+    const s = Math.max(0, Math.min(100, score));
+    return '<div style="margin-bottom:0.5rem;">' +
+      '<div style="display:flex;justify-content:space-between;font-size:0.8rem;margin-bottom:0.2rem;"><span>' + escapeHtml(label) + '</span><span>' + score + '%</span></div>' +
+      '<div style="background:rgba(128,128,128,0.2);border-radius:4px;height:8px;overflow:hidden;">' +
+      '<div style="width:' + s + '%;height:100%;background:' + confidenceColor(score) + ';"></div>' +
+      '</div></div>';
+  }
+
+  function renderChartAnalysis(a) {
+    const el = document.getElementById('ai-ca-analysis-output');
+    const placeholderBanner = a.isPlaceholder
+      ? '<div class="review-item" style="color:var(--text-muted);font-size:0.78rem;">Example data — screenshot reading isn\'t connected to a live vision AI yet. Use candle data for a real read, or add a vision API key on the backend.</div>'
+      : '';
+    const zonesHtml = (a.zones || []).map(function (z) {
+      return '<div style="font-size:0.85rem;">' + escapeHtml(z.kind) + ' ' + escapeHtml(z.zoneType) + ': ' + z.low + ' – ' + z.high + (z.mitigated ? ' (mitigated)' : '') + '</div>';
+    }).join('');
+    el.innerHTML =
+      placeholderBanner +
+      '<div class="review-item"><strong>Trend:</strong> ' + escapeHtml(a.trend) + ' &nbsp; <strong>Bias:</strong> ' + escapeHtml(a.bias) + ' &nbsp; <strong>Read confidence:</strong> ' + a.confidence + '%</div>' +
+      '<div class="review-item"><strong>Structure:</strong> ' + escapeHtml(a.structure) + '</div>' +
+      '<div class="review-item"><strong>Price context:</strong> ' + escapeHtml(a.currentPriceContext) + ' (' + escapeHtml(a.premiumDiscount) + ')</div>' +
+      '<div class="review-item"><strong>Liquidity:</strong> ' + escapeHtml(a.liquidity) + '</div>' +
+      (a.latestEvent ? '<div class="review-item"><strong>Latest event:</strong> ' + escapeHtml(a.latestEvent) + '</div>' : '') +
+      (a.fvgStatus ? '<div class="review-item"><strong>FVG:</strong> ' + escapeHtml(a.fvgStatus) + '</div>' : '') +
+      (zonesHtml ? '<div class="review-item"><strong>Zones:</strong><br>' + zonesHtml + '</div>' : '') +
+      ((a.notes && a.notes.length) ? '<div class="review-item" style="color:var(--text-muted);font-size:0.8rem;">' + a.notes.map(escapeHtml).join('<br>') + '</div>' : '');
+  }
+
+  function renderTradeValidation(v) {
+    const el = document.getElementById('ai-ca-validation-output');
+    const statusColor = v.tradeStatus === 'VALID' ? 'var(--green)' : 'var(--red)';
+    el.innerHTML =
+      '<div class="review-item"><strong style="color:' + statusColor + ';">' + escapeHtml(v.tradeStatus) + '</strong> — ' + escapeHtml(v.recommendation) + (v.direction ? ' (' + escapeHtml(v.direction) + ')' : '') + '</div>' +
+      (v.reasonsPassed.length ? '<div class="review-item" style="color:var(--green)">✓ ' + v.reasonsPassed.map(escapeHtml).join('<br>✓ ') + '</div>' : '') +
+      (v.reasonsFailed.length ? '<div class="review-item" style="color:var(--red)">✗ ' + v.reasonsFailed.map(escapeHtml).join('<br>✗ ') + '</div>' : '') +
+      ((v.suggestedEntry != null || v.stopLoss != null || v.takeProfit != null)
+        ? '<div class="review-item"><strong>Suggested:</strong> Entry ' + (v.suggestedEntry ?? '—') + ' · SL ' + (v.stopLoss ?? '—') + ' · TP ' + (v.takeProfit ?? '—') + (v.riskReward != null ? ' · R:R ' + v.riskReward.toFixed(2) : '') + '<br><button class="btn" style="margin-top:0.5rem;padding:0.3rem 0.6rem;font-size:0.75rem;" onclick="aiUseValidationLevelsInCalculator()">Use these levels in Position Size Calculator</button></div>'
+        : '');
+  }
+
+  function renderAiCoach(c) {
+    const el = document.getElementById('ai-ca-coach-output');
+    el.innerHTML =
+      '<div class="review-item"><strong>' + escapeHtml(c.headline) + '</strong> — recommendation: ' + escapeHtml(c.recommendation) + '</div>' +
+      ((c.explanation && c.explanation.length) ? c.explanation.map(function (line) { return '<div class="review-item">' + escapeHtml(line) + '</div>'; }).join('') : '');
+  }
+
+  function renderConfidenceMeter(breakdown) {
+    const el = document.getElementById('ai-ca-confidence-output');
+    el.innerHTML =
+      confidenceBar('Overall confidence', breakdown.overall) +
+      '<div style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-secondary);margin-bottom:0.4rem;">Breakdown</div>' +
+      confidenceBar('H4 trend alignment', breakdown.trendAlignment) +
+      confidenceBar('POI quality', breakdown.poiQuality) +
+      confidenceBar('Liquidity quality', breakdown.liquidityQuality) +
+      confidenceBar('BOS quality', breakdown.bosQuality) +
+      confidenceBar('CHOCH quality', breakdown.chochQuality) +
+      confidenceBar('FVG quality', breakdown.fvgQuality) +
+      confidenceBar('R:R quality', breakdown.rrQuality);
+  }
+
+  function parseCandlesTextarea(raw) {
+    return raw.trim().split('\n').map(function (line) { return line.trim(); }).filter(Boolean).map(function (line) {
+      const parts = line.split(',').map(function (s) { return s.trim(); });
+      if (parts.length < 5) throw new Error('Each line needs time,open,high,low,close — got: "' + line + '"');
+      const candle = { time: parts[0], open: parseFloat(parts[1]), high: parseFloat(parts[2]), low: parseFloat(parts[3]), close: parseFloat(parts[4]) };
+      if ([candle.open, candle.high, candle.low, candle.close].some(isNaN)) {
+        throw new Error('Could not read numbers on line: "' + line + '"');
+      }
+      return candle;
+    });
+  }
+
+  async function runChartAnalysis() {
+    const errorEl = document.getElementById('ai-ca-error');
+    const resultsEl = document.getElementById('ai-ca-results');
+    errorEl.textContent = '';
+    resultsEl.style.display = 'none';
+
+    const mode = document.getElementById('ai-ca-mode-live').checked
+      ? 'live'
+      : (document.getElementById('ai-ca-mode-image').checked ? 'image' : 'candles');
+
+    if (mode === 'live') {
+      await loadLiveLatest();
+      return;
+    }
+
+    const direction = document.getElementById('ai-ca-direction').value || null;
+    const rr = parseFloat(document.getElementById('ai-ca-rr').value);
+    const minRr = parseFloat(document.getElementById('ai-ca-minrr').value);
+    const hasM15Bos = document.getElementById('ai-ca-m15bos').checked;
+    const hasM15Choch = document.getElementById('ai-ca-m15choch').checked;
+    const hasM15Entry = document.getElementById('ai-ca-m15entry').checked;
+    const hasSweep = document.getElementById('ai-ca-sweep').checked;
+
+    try {
+      let data;
+      if (mode === 'image') {
+        const fileInput = document.getElementById('ai-ca-file');
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) { errorEl.textContent = 'Choose a chart screenshot first.'; return; }
+        const form = new FormData();
+        form.append('file', file);
+        if (direction) form.append('direction', direction);
+        if (!isNaN(rr)) form.append('planned_rr', String(rr));
+        if (!isNaN(minRr)) form.append('min_rr', String(minRr));
+        form.append('has_m15_bos', String(hasM15Bos));
+        form.append('has_m15_choch', String(hasM15Choch));
+        form.append('has_m15_entry_confirmation', String(hasM15Entry));
+        form.append('has_liquidity_sweep', String(hasSweep));
+        data = await apiFetchMultipart('/api/v1/chart/full-analysis/image', { method: 'POST', body: form });
+      } else {
+        const raw = document.getElementById('ai-ca-candles').value;
+        if (!raw.trim()) { errorEl.textContent = 'Paste at least one candle first.'; return; }
+        const candles = parseCandlesTextarea(raw);
+        const m15Raw = document.getElementById('ai-ca-m15-candles').value;
+        const body = {
+          candles: candles,
+          direction: direction,
+          plannedRr: isNaN(rr) ? null : rr,
+          minRr: isNaN(minRr) ? 2.0 : minRr,
+          hasM15Bos: hasM15Bos,
+          hasM15Choch: hasM15Choch,
+          hasM15EntryConfirmation: hasM15Entry,
+          hasLiquiditySweep: hasSweep,
+        };
+        if (m15Raw && m15Raw.trim()) {
+          body.m15Candles = parseCandlesTextarea(m15Raw);
+        }
+        data = await apiFetch('/api/v1/chart/full-analysis/candles', { method: 'POST', body: JSON.stringify(body) });
+      }
+      lastChartAnalysisResult = data;
+      renderChartAnalysis(data.analysis);
+      renderTradeValidation(data.validation);
+      renderAiCoach(data.coach);
+      renderConfidenceMeter(data.coach.confidence);
+      renderMultiTimeframe(data.multiTimeframe);
+      resultsEl.style.display = 'block';
+    } catch (e) {
+      errorEl.textContent = 'Error: ' + e.message;
+    }
+  }
+
+  function mapZoneTypeToPoi(zoneType) {
+    if (!zoneType) return '';
+    if (zoneType === 'Order Block') return 'Order Block';
+    if (zoneType === 'Fair Value Gap') return 'Fair Value Gap (FVG)';
+    return 'Other';
+  }
+
+  function saveChartAnalysisToJournal() {
+    if (!lastChartAnalysisResult) {
+      if (typeof showToast === 'function') showToast('Run "Analyze chart" first.', 'error');
+      return;
+    }
+    const pairInput = document.getElementById('ai-ca-pair');
+    const pair = pairInput ? pairInput.value.trim() : '';
+    if (!pair) {
+      if (typeof showToast === 'function') showToast('Enter a pair/instrument first.', 'error');
+      return;
+    }
+    const { analysis, validation, coach } = lastChartAnalysisResult;
+
+    if (typeof openJournalModal === 'function') openJournalModal();
+
+    const setVal = function (id, value) {
+      const el = document.getElementById(id);
+      if (el && value !== null && value !== undefined && value !== '') el.value = value;
+    };
+
+    setVal('j-pair', pair);
+    const dir = (validation.direction || analysis.bias || '').toLowerCase();
+    if (dir === 'buy' || dir === 'sell') setVal('j-direction', dir);
+    setVal('j-entry', validation.suggestedEntry);
+    setVal('j-sl', validation.stopLoss);
+    setVal('j-tp', validation.takeProfit);
+    setVal('j-rr', validation.riskReward);
+    const poi = mapZoneTypeToPoi(analysis.entryZone && analysis.entryZone.zoneType);
+    if (poi) setVal('j-poi', poi);
+
+    const noteLines = [];
+    const sourceLabel = analysis.isPlaceholder
+      ? 'example/placeholder data'
+      : (analysis.source === 'screenshot' ? 'AI vision read' : 'candle data read');
+    noteLines.push('Chart Analysis Engine (' + sourceLabel + '): ' + validation.tradeStatus + ' — ' + validation.recommendation + '.');
+    if (coach && coach.explanation) noteLines.push.apply(noteLines, coach.explanation);
+    setVal('j-notes', noteLines.join(' '));
+
+    if (typeof showToast === 'function') showToast('Trade pre-filled from Chart Analysis — review and Save.', 'success');
+  }
+
+  function useValidationLevelsInCalculator() {
+    if (!lastChartAnalysisResult) return;
+    const { validation } = lastChartAnalysisResult;
+    const setVal = function (id, value) {
+      const el = document.getElementById(id);
+      if (el && value !== null && value !== undefined) el.value = value;
+    };
+    setVal('ai-ps-entry', validation.suggestedEntry);
+    setVal('ai-ps-sl', validation.stopLoss);
+    setVal('ai-ps-tp', validation.takeProfit);
+    const calcCard = document.getElementById('ai-ps-balance');
+    if (calcCard) calcCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  async function runPositionSize() {
+    const errorEl = document.getElementById('ai-ps-error');
+    const outputEl = document.getElementById('ai-ps-output');
+    errorEl.textContent = '';
+    outputEl.innerHTML = '';
+
+    const balance = parseFloat(document.getElementById('ai-ps-balance').value);
+    const riskPercent = parseFloat(document.getElementById('ai-ps-risk-percent').value);
+    const riskAmount = parseFloat(document.getElementById('ai-ps-risk-amount').value);
+    const entry = parseFloat(document.getElementById('ai-ps-entry').value);
+    const sl = parseFloat(document.getElementById('ai-ps-sl').value);
+    const tp = parseFloat(document.getElementById('ai-ps-tp').value);
+    const vpp = parseFloat(document.getElementById('ai-ps-vpp').value);
+    const lotStep = parseFloat(document.getElementById('ai-ps-lotstep').value);
+
+    const body = {
+      accountBalance: isNaN(balance) ? null : balance,
+      riskPercent: isNaN(riskPercent) ? null : riskPercent,
+      riskAmount: isNaN(riskAmount) ? null : riskAmount,
+      entry: isNaN(entry) ? null : entry,
+      stopLoss: isNaN(sl) ? null : sl,
+      takeProfit: isNaN(tp) ? null : tp,
+      valuePerPointPerLot: isNaN(vpp) ? null : vpp,
+      lotStep: isNaN(lotStep) ? 0.01 : lotStep,
+    };
+
+    try {
+      const data = await apiFetch('/api/v1/tools/position-size', { method: 'POST', body: JSON.stringify(body) });
+      outputEl.innerHTML =
+        '<div class="review-item"><strong>Recommended size:</strong> ' + data.recommendedLots + ' lots</div>' +
+        '<div class="review-item">Risking ' + '$' + data.actualRiskAmount.toFixed(2) + ' (target was $' + data.riskAmount.toFixed(2) + ')</div>' +
+        (data.potentialProfit != null ? '<div class="review-item">Potential profit at TP: $' + data.potentialProfit.toFixed(2) + (data.riskReward != null ? ' (R:R ' + data.riskReward.toFixed(2) + ')' : '') + '</div>' : '') +
+        (data.warnings.length ? '<div class="review-item" style="color:var(--red)">⚠ ' + data.warnings.map(escapeHtml).join('<br>⚠ ') + '</div>' : '');
+    } catch (e) {
+      errorEl.textContent = 'Error: ' + e.message;
+    }
+  }
+
+  async function runTradeReview() {
+    const el = document.getElementById('ai-review-output');
+    if (!el) return;
+    const exit = document.getElementById('j-exit').value;
+    if (!exit) { el.textContent = 'Add an exit price first — this trade isn\'t closed yet.'; return; }
+    el.textContent = 'Reviewing...';
+    const body = {
+      pair: (document.getElementById('j-pair').value || '').trim() || null,
+      direction: document.getElementById('j-direction').value,
+      entry: numOrNull(document.getElementById('j-entry').value),
+      exit: numOrNull(exit),
+      pnl: numOrNull(document.getElementById('j-pnl').value),
+      rr: numOrNull(document.getElementById('j-rr').value),
+      rulesFollowed: document.getElementById('j-rules-followed').value,
+      workedTags: (typeof selectedWorkedTags !== 'undefined') ? [...selectedWorkedTags] : [],
+      failedTags: (typeof selectedFailedTags !== 'undefined') ? [...selectedFailedTags] : [],
+      exitReason: document.getElementById('j-exit-reason').value || null,
+      h4PoiType: document.getElementById('j-poi').value || null,
+      notes: document.getElementById('j-notes').value || null,
+    };
+    try {
+      const data = await apiFetch('/api/v1/coach/review-trade', { method: 'POST', body: JSON.stringify(body) });
+      el.innerHTML =
+        '<div class="review-item"><strong>' + escapeHtml(data.headline) + '</strong></div>' +
+        (data.whatWorked.length ? '<div class="review-item" style="color:var(--green)">✓ ' + data.whatWorked.map(escapeHtml).join('<br>✓ ') + '</div>' : '') +
+        (data.whatWentWrong.length ? '<div class="review-item" style="color:var(--red)">✗ ' + data.whatWentWrong.map(escapeHtml).join('<br>✗ ') + '</div>' : '') +
+        '<div class="review-item"><strong>Lesson:</strong> ' + escapeHtml(data.lesson) + '</div>';
+    } catch (e) {
+      el.textContent = 'Error: ' + e.message;
+    }
+  }
+
+  function renderMultiTimeframe(mtf) {
+    const card = document.getElementById('ai-ca-mtf-card');
+    const el = document.getElementById('ai-ca-mtf-output');
+    if (!mtf) {
+      card.style.display = 'none';
+      return;
+    }
+    card.style.display = '';
+    const statusColor = mtf.aligned ? 'var(--green)' : 'var(--red)';
+    el.innerHTML =
+      '<div class="review-item"><strong style="color:' + statusColor + ';">' + (mtf.aligned ? 'CONFIRMED' : 'NOT CONFIRMED') + '</strong></div>' +
+      '<div class="review-item">M15 BOS: ' + (mtf.hasM15Bos ? '✓' : '✗') + ' &nbsp; M15 CHOCH: ' + (mtf.hasM15Choch ? '✓' : '✗') + ' &nbsp; Trend agreement: ' + (mtf.hasM15EntryConfirmation ? '✓' : '✗') + '</div>' +
+      ((mtf.notes && mtf.notes.length) ? '<div class="review-item" style="color:var(--text-muted);font-size:0.8rem;">' + mtf.notes.map(escapeHtml).join('<br>') + '</div>' : '');
+  }
+
+  async function runSessionDetect() {
+    const el = document.getElementById('ai-session-output');
+    el.textContent = 'Detecting...';
+    try {
+      const data = await apiFetch('/api/v1/tools/session-detect', { method: 'POST', body: JSON.stringify({}) });
+      el.innerHTML =
+        '<div class="review-item"><strong>' + escapeHtml(data.primarySession) + '</strong>' + (data.isOverlap ? ' (overlap)' : '') + '</div>' +
+        '<div class="review-item" style="color:var(--text-muted);font-size:0.8rem;">Active: ' + (data.activeSessions.length ? data.activeSessions.map(escapeHtml).join(', ') : 'Between sessions') + ' · ' + escapeHtml(data.utcTime) + '</div>';
+    } catch (e) {
+      el.textContent = 'Error: ' + e.message;
+    }
+  }
+
+  async function runNewsCheck() {
+    const errorEl = document.getElementById('ai-news-error');
+    const el = document.getElementById('ai-news-output');
+    errorEl.textContent = '';
+    el.innerHTML = '';
+    const timeVal = document.getElementById('ai-news-time').value;
+    if (!timeVal) { errorEl.textContent = 'Choose a planned trade time first.'; return; }
+    const buffer = parseInt(document.getElementById('ai-news-buffer').value, 10);
+    const currenciesRaw = document.getElementById('ai-news-currencies').value.trim();
+    const currencies = currenciesRaw ? currenciesRaw.split(',').map(function (s) { return s.trim().toUpperCase(); }).filter(Boolean) : null;
+    const minImpact = document.getElementById('ai-news-min-impact').value;
+
+    const body = {
+      plannedTime: new Date(timeVal).toISOString(),
+      bufferMinutes: isNaN(buffer) ? 60 : buffer,
+      currencies: currencies,
+      minImpact: minImpact,
+    };
+    el.textContent = 'Checking...';
+    try {
+      const data = await apiFetch('/api/v1/news/check-calendar', { method: 'POST', body: JSON.stringify(body) });
+      const statusColor = data.hasHighImpactNearby ? 'var(--red)' : 'var(--green)';
+      const statusText = data.hasHighImpactNearby ? 'News nearby — consider waiting' : 'Clear to trade (no matching news nearby)';
+      el.innerHTML =
+        '<div class="review-item"><strong style="color:' + statusColor + ';">' + statusText + '</strong></div>' +
+        (data.matchingEvents.length
+          ? data.matchingEvents.map(function (ev) {
+              return '<div class="review-item">' + escapeHtml(ev.event) + ' (' + escapeHtml(ev.currency) + ', ' + escapeHtml(ev.impact) + ') — ' + ev.minutesAway + ' min away</div>';
+            }).join('')
+          : '') +
+        (data.warnings.length ? '<div class="review-item" style="color:var(--text-muted);font-size:0.8rem;">' + data.warnings.map(escapeHtml).join('<br>') + '</div>' : '');
+    } catch (e) {
+      errorEl.textContent = 'Error: ' + e.message;
+    }
+  }
+
+  async function runBacktest() {
+    const errorEl = document.getElementById('ai-bt-error');
+    const outputEl = document.getElementById('ai-bt-output');
+    errorEl.textContent = '';
+    outputEl.innerHTML = '';
+
+    const raw = document.getElementById('ai-bt-candles').value;
+    if (!raw.trim()) { errorEl.textContent = 'Paste candle data first (50+ candles for a meaningful sample).'; return; }
+
+    let candles;
+    try {
+      candles = parseCandlesTextarea(raw);
+    } catch (e) {
+      errorEl.textContent = e.message;
+      return;
+    }
+
+    const lookback = parseInt(document.getElementById('ai-bt-lookback').value, 10);
+    const minRr = parseFloat(document.getElementById('ai-bt-minrr').value);
+    const direction = document.getElementById('ai-bt-direction').value || null;
+
+    const body = {
+      candles: candles,
+      lookbackWindow: isNaN(lookback) ? 100 : lookback,
+      minRr: isNaN(minRr) ? 2.0 : minRr,
+      direction: direction,
+    };
+
+    outputEl.textContent = 'Running backtest...';
+    try {
+      const data = await apiFetch('/api/v1/backtest/run', { method: 'POST', body: JSON.stringify(body) });
+      const rows = data.trades.map(function (t) {
+        const color = t.outcome === 'WIN' ? 'var(--green)' : (t.outcome === 'LOSS' ? 'var(--red)' : 'var(--text-muted)');
+        return '<div style="font-size:0.78rem;padding:0.25rem 0;border-bottom:1px solid var(--border);">' +
+          escapeHtml(t.entryTime) + ' · ' + escapeHtml(t.direction) + ' @ ' + t.entry +
+          ' <span style="color:' + color + ';font-weight:600;">' + escapeHtml(t.outcome) + '</span>' +
+          (t.rMultiple != null ? ' (' + t.rMultiple.toFixed(2) + 'R)' : '') +
+          '</div>';
+      }).join('');
+      outputEl.innerHTML =
+        '<div class="review-item"><strong>' + data.totalTrades + ' closed trades</strong> — ' + data.wins + 'W / ' + data.losses + 'L (' + data.winRate + '% win rate)' + (data.openTrades ? ', ' + data.openTrades + ' still open' : '') + '</div>' +
+        '<div class="review-item">Total: ' + data.totalRMultiple.toFixed(2) + 'R · Average: ' + data.averageRMultiple.toFixed(2) + 'R per trade' + (data.profitFactor != null ? ' · Profit factor: ' + data.profitFactor.toFixed(2) : '') + '</div>' +
+        (data.notes.length ? '<div class="review-item" style="color:var(--text-muted);font-size:0.8rem;">' + data.notes.map(escapeHtml).join('<br>') + '</div>' : '') +
+        (rows ? '<div style="margin-top:0.75rem;max-height:260px;overflow-y:auto;">' + rows + '</div>' : '');
+    } catch (e) {
+      errorEl.textContent = 'Error: ' + e.message;
+      outputEl.textContent = '';
+    }
+  }
+
+  async function loadLiveLatest() {
+    const statusEl = document.getElementById('ai-live-status');
+    const errorEl = document.getElementById('ai-ca-error');
+    const resultsEl = document.getElementById('ai-ca-results');
+    errorEl.textContent = '';
+
+    const symbol = document.getElementById('ai-live-symbol').value.trim();
+    const timeframe = document.getElementById('ai-live-timeframe').value.trim();
+    if (!symbol || !timeframe) {
+      statusEl.textContent = 'Enter the symbol and timeframe your MT5 EA is pushing (must match exactly).';
+      return;
+    }
+    // Remember the last symbol/timeframe used so it's pre-filled next visit --
+    // no need to retype it every time.
+    localStorage.setItem('te_ai_live_symbol', symbol);
+    localStorage.setItem('te_ai_live_timeframe', timeframe);
+
+    const base = getApiBase();
+    if (!base) { errorEl.textContent = 'Set your backend URL above first.'; return; }
+
+    try {
+      const res = await fetch(base + '/api/v1/live/latest?symbol=' + encodeURIComponent(symbol) + '&timeframe=' + encodeURIComponent(timeframe));
+      if (res.status === 404) {
+        statusEl.textContent = 'No live data yet for ' + symbol + ' ' + timeframe + ' — make sure your MT5 EA is attached, running, and has pushed at least one update.';
+        resultsEl.style.display = 'none';
+        return;
+      }
+      if (!res.ok) {
+        const text = await res.text().catch(function () { return ''; });
+        throw new Error(res.status + ': ' + text.slice(0, 200));
+      }
+      const data = await res.json();
+      lastChartAnalysisResult = data;
+      renderChartAnalysis(data.analysis);
+      renderTradeValidation(data.validation);
+      renderAiCoach(data.coach);
+      renderConfidenceMeter(data.coach.confidence);
+      renderMultiTimeframe(data.multiTimeframe);
+      resultsEl.style.display = 'block';
+      statusEl.textContent = 'Last updated: ' + new Date(data.updatedAt).toLocaleString();
+    } catch (e) {
+      errorEl.textContent = 'Error: ' + e.message;
+    }
+  }
+
+  function startLiveAutoRefresh() {
+    stopLiveAutoRefresh();
+    loadLiveLatest();
+    liveAutoRefreshTimer = setInterval(loadLiveLatest, 30000);
+  }
+
+  function stopLiveAutoRefresh() {
+    if (liveAutoRefreshTimer) {
+      clearInterval(liveAutoRefreshTimer);
+      liveAutoRefreshTimer = null;
+    }
+  }
+
+  function formatMlError(e) {
+    // apiFetch()'s Error.message is "STATUS: <raw response body>" -- try
+    // to pull the clean {"error":{"message":...}} envelope out of it so
+    // the "not enough data yet" message reads like a sentence, not JSON.
+    const msg = e && e.message ? e.message : String(e);
+    const jsonStart = msg.indexOf('{');
+    if (jsonStart >= 0) {
+      try {
+        const parsed = JSON.parse(msg.slice(jsonStart));
+        if (parsed && parsed.error && parsed.error.message) return parsed.error.message;
+      } catch (_) { /* not JSON, fall through */ }
+    }
+    return msg;
+  }
+
+  function renderMlActiveModel(m) {
+    const el = document.getElementById('ai-ml-active');
+    if (!el) return;
+    if (!m) {
+      el.innerHTML = '<span style="color:var(--text-muted);">No trained model yet &mdash; Pre-Trade Check will use rule-based estimates only until you train one.</span>';
+      return;
+    }
+    el.innerHTML =
+      '<strong>' + escapeHtml(m.version) + '</strong> (' + escapeHtml(m.algorithm || 'unknown') + ')' +
+      (m.trainedAt ? ' &middot; trained ' + escapeHtml(new Date(m.trainedAt).toLocaleString()) : '') +
+      (m.trainingRows != null ? ' &middot; ' + m.trainingRows + ' trades used' : '');
+  }
+
+  async function aiLoadActiveMlModel() {
+    try {
+      const m = await apiFetch('/api/v1/ml/models/active');
+      renderMlActiveModel(m);
+    } catch (e) {
+      renderMlActiveModel(null);
+    }
+  }
+
+  async function aiCheckMlReadiness() {
+    const el = document.getElementById('ai-ml-readiness');
+    const errorEl = document.getElementById('ai-ml-error');
+    errorEl.textContent = '';
+    el.textContent = 'Checking your trade data...';
+    try {
+      const r = await apiFetch('/api/v1/ml/dataset/validation-report');
+      const pct = Math.min(100, Math.round((r.validTrades / r.minTrainingRows) * 100));
+      const barColor = r.readyForTraining ? 'var(--green)' : 'var(--yellow, #d9a441)';
+      el.innerHTML =
+        '<div style="font-size:0.85rem;margin-bottom:0.35rem;">' +
+        (r.readyForTraining
+          ? '<span style="color:var(--green);">Ready to train</span> &mdash; ' + r.validTrades + ' valid trades logged (need ' + r.minTrainingRows + ').'
+          : '<span style="color:' + barColor + ';">Not enough data yet</span> &mdash; ' + r.validTrades + ' of ' + r.minTrainingRows + ' valid trades needed' + (r.reason ? ': ' + escapeHtml(r.reason) : '.')) +
+        '</div>' +
+        '<div style="background:var(--border);border-radius:4px;height:8px;overflow:hidden;max-width:320px;">' +
+        '<div style="background:' + barColor + ';height:100%;width:' + pct + '%;"></div></div>' +
+        (r.invalidTrades ? '<div style="font-size:0.78rem;color:var(--text-muted);margin-top:0.35rem;">' + r.invalidTrades + ' trade(s) skipped for missing fields.</div>' : '') +
+        '<div style="font-size:0.78rem;color:var(--text-muted);margin-top:0.25rem;">Win rate so far: ' + r.classDistribution.winRate + '%</div>';
+    } catch (e) {
+      el.textContent = '';
+      errorEl.textContent = formatMlError(e);
+    }
+  }
+
+  async function aiTrainMlModel() {
+    const outputEl = document.getElementById('ai-ml-train-output');
+    const errorEl = document.getElementById('ai-ml-error');
+    errorEl.textContent = '';
+    outputEl.textContent = 'Training model on your trade history...';
+    try {
+      const data = await apiFetch('/api/v1/ml/train', { method: 'POST', body: JSON.stringify({}) });
+      outputEl.innerHTML =
+        '<div class="review-item"><strong>Trained ' + escapeHtml(data.version) + '</strong> (' + escapeHtml(data.algorithm) + ') on ' + data.rowsUsed + ' trades ' +
+        '(' + data.splitSizes.train + ' train / ' + data.splitSizes.val + ' val / ' + data.splitSizes.test + ' test).</div>' +
+        '<div class="review-item">Test accuracy: ' + (data.testMetrics.accuracy * 100).toFixed(1) + '% &middot; F1: ' + data.testMetrics.f1.toFixed(2) +
+        (data.testMetrics.rocAuc != null ? ' &middot; ROC AUC: ' + data.testMetrics.rocAuc.toFixed(2) : '') + '</div>' +
+        (data.overfitWarning ? '<div class="review-item" style="color:var(--red);">Note: training accuracy is much higher than test accuracy &mdash; treat predictions with extra caution until you have more trades.</div>' : '');
+      aiLoadActiveMlModel();
+    } catch (e) {
+      outputEl.textContent = '';
+      errorEl.textContent = formatMlError(e);
+    }
+  }
+
+  // === Sprint 16: Live Opportunity Scanner ================================
+  // Watches a user-maintained list of {symbol, timeframe} pairs by polling
+  // the existing GET /live/latest endpoint for each one (no new backend
+  // endpoint needed) and surfaces which ones currently have a VALID setup.
+  const SCAN_LIST_KEY = 'te_ai_scan_list';
+  const SCAN_NOTIFY_KEY = 'te_ai_scan_notify';
+  const SCAN_AUTOREFRESH_KEY = 'te_ai_scan_autorefresh';
+  let scanAutoRefreshTimer = null;
+  let scanLastStatus = {}; // "SYMBOL|TIMEFRAME" -> last known tradeStatus, to detect new VALIDs
+
+  function getScanList() {
+    try {
+      const raw = localStorage.getItem(SCAN_LIST_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function setScanList(list) {
+    localStorage.setItem(SCAN_LIST_KEY, JSON.stringify(list));
+  }
+
+  function renderScanList() {
+    const el = document.getElementById('ai-scan-list');
+    const list = getScanList();
+    if (!list.length) {
+      el.innerHTML = '<div style="font-size:0.82rem;color:var(--text-muted);">No assets added yet &mdash; add each symbol/timeframe your MT5 EA is pushing.</div>';
+      return;
+    }
+    el.innerHTML = list.map(function (item, i) {
+      return '<span class="tag-btn" style="margin:0 0.4rem 0.4rem 0;display:inline-flex;align-items:center;gap:0.4rem;">' +
+        escapeHtml(item.symbol) + ' &middot; ' + escapeHtml(item.timeframe) +
+        ' <span onclick="aiScannerRemove(' + i + ')" style="cursor:pointer;color:var(--red);">&times;</span></span>';
+    }).join('');
+  }
+
+  window.aiScannerAdd = function () {
+    const symbolInput = document.getElementById('ai-scan-add-symbol');
+    const timeframeInput = document.getElementById('ai-scan-add-timeframe');
+    const symbol = symbolInput.value.trim();
+    const timeframe = timeframeInput.value.trim();
+    if (!symbol || !timeframe) return;
+    const list = getScanList();
+    const exists = list.some(function (item) {
+      return item.symbol.toLowerCase() === symbol.toLowerCase() && item.timeframe.toLowerCase() === timeframe.toLowerCase();
+    });
+    if (!exists) {
+      list.push({ symbol: symbol, timeframe: timeframe });
+      setScanList(list);
+      renderScanList();
+    }
+    symbolInput.value = '';
+    timeframeInput.value = '';
+  };
+
+  window.aiScannerRemove = function (index) {
+    const list = getScanList();
+    list.splice(index, 1);
+    setScanList(list);
+    renderScanList();
+  };
+
+  function scanConfidence(data) {
+    return data && data.coach && data.coach.confidence && data.coach.confidence.overall != null
+      ? data.coach.confidence.overall
+      : null;
+  }
+
+  window.aiScannerScanNow = async function () {
+    const list = getScanList();
+    const statusEl = document.getElementById('ai-scan-status');
+    const resultsEl = document.getElementById('ai-scan-results');
+    if (!list.length) {
+      statusEl.textContent = 'Add at least one symbol/timeframe above first.';
+      resultsEl.innerHTML = '';
+      return;
+    }
+    const base = getApiBase();
+    if (!base) { statusEl.textContent = 'Set your backend URL above first.'; return; }
+
+    statusEl.textContent = 'Scanning ' + list.length + ' asset(s)...';
+    const rows = await Promise.all(list.map(async function (item) {
+      const key = item.symbol.toUpperCase() + '|' + item.timeframe.toUpperCase();
+      try {
+        const res = await fetch(base + '/api/v1/live/latest?symbol=' + encodeURIComponent(item.symbol) + '&timeframe=' + encodeURIComponent(item.timeframe));
+        if (res.status === 404) {
+          return { item: item, key: key, state: 'no-data' };
+        }
+        if (!res.ok) {
+          return { item: item, key: key, state: 'error' };
+        }
+        const data = await res.json();
+        const tradeStatus = data.validation && data.validation.tradeStatus ? data.validation.tradeStatus : 'UNKNOWN';
+        return { item: item, key: key, state: 'ok', data: data, tradeStatus: tradeStatus };
+      } catch (e) {
+        return { item: item, key: key, state: 'error' };
+      }
+    }));
+
+    // Detect newly-VALID assets (weren't VALID on the previous scan) for
+    // the notification/toast, before re-sorting for display.
+    const newlyValid = rows.filter(function (r) {
+      return r.state === 'ok' && r.tradeStatus === 'VALID' && scanLastStatus[r.key] !== 'VALID';
+    });
+    rows.forEach(function (r) {
+      if (r.state === 'ok') scanLastStatus[r.key] = r.tradeStatus;
+    });
+
+    // VALID first, then everything else, alphabetical within each group.
+    rows.sort(function (a, b) {
+      const aValid = a.state === 'ok' && a.tradeStatus === 'VALID' ? 0 : 1;
+      const bValid = b.state === 'ok' && b.tradeStatus === 'VALID' ? 0 : 1;
+      if (aValid !== bValid) return aValid - bValid;
+      return a.key.localeCompare(b.key);
+    });
+
+    resultsEl.innerHTML = rows.map(function (r) {
+      const label = escapeHtml(r.item.symbol) + ' &middot; ' + escapeHtml(r.item.timeframe);
+      if (r.state === 'no-data') {
+        return '<div class="review-item" style="color:var(--text-muted);">' + label + ' &mdash; no live data yet (check the EA is attached and running).</div>';
+      }
+      if (r.state === 'error') {
+        return '<div class="review-item" style="color:var(--text-muted);">' + label + ' &mdash; couldn\'t fetch right now.</div>';
+      }
+      const isValid = r.tradeStatus === 'VALID';
+      const conf = scanConfidence(r.data);
+      const direction = r.data.validation && r.data.validation.direction ? r.data.validation.direction : '';
+      const trend = r.data.analysis && r.data.analysis.trend ? r.data.analysis.trend : '';
+      return '<div class="review-item" style="' + (isValid ? 'border-color:var(--green);background:var(--green-dim);' : '') + '">' +
+        '<strong style="' + (isValid ? 'color:var(--green);' : '') + '">' + label + ' &mdash; ' + escapeHtml(r.tradeStatus) + (direction ? ' (' + escapeHtml(direction) + ')' : '') + '</strong>' +
+        '<br><span style="font-size:0.78rem;color:var(--text-secondary);">Trend: ' + escapeHtml(trend) + (conf != null ? ' &middot; Confidence: ' + conf + '%' : '') + '</span>' +
+        '</div>';
+    }).join('') || '<div style="font-size:0.82rem;color:var(--text-muted);">No results.</div>';
+
+    statusEl.textContent = 'Last scanned: ' + new Date().toLocaleTimeString();
+
+    if (newlyValid.length) {
+      const msg = newlyValid.map(function (r) {
+        return r.item.symbol + ' ' + r.item.timeframe + (r.data.validation.direction ? ' (' + r.data.validation.direction + ')' : '');
+      }).join(', ');
+      if (typeof showToast === 'function') showToast('VALID setup found: ' + msg, 'success');
+      const notifyEnabled = document.getElementById('ai-scan-notify') && document.getElementById('ai-scan-notify').checked;
+      if (notifyEnabled && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        newlyValid.forEach(function (r) {
+          try {
+            new Notification('TradeEdge: VALID setup', {
+              body: r.item.symbol + ' ' + r.item.timeframe + ' is ready to trade.',
+            });
+          } catch (e) { /* ignore -- some browsers restrict this outside a user gesture */ }
+        });
+      }
+    }
+  };
+
+  function startScanAutoRefresh() {
+    stopScanAutoRefresh();
+    aiScannerScanNow();
+    scanAutoRefreshTimer = setInterval(aiScannerScanNow, 30000);
+  }
+  function stopScanAutoRefresh() {
+    if (scanAutoRefreshTimer) {
+      clearInterval(scanAutoRefreshTimer);
+      scanAutoRefreshTimer = null;
+    }
+  }
+
+  window.aiSaveApiBase = function () {
+    const input = document.getElementById('ai-api-base-input');
+    setApiBase(input.value.trim());
+    if (typeof showToast === 'function') showToast('Backend URL saved.', 'success');
+  };
+  window.aiSyncTrades = syncTradesToBackend;
+  window.aiImportMt5Trades = importMt5Trades;
+  window.aiLoadCoach = loadCoachDeepDive;
+  window.aiRunPretrade = runPretradeCheck;
+  window.aiRunChartAnalysis = runChartAnalysis;
+  window.aiSaveChartAnalysisToJournal = saveChartAnalysisToJournal;
+  window.aiUseValidationLevelsInCalculator = useValidationLevelsInCalculator;
+  window.aiRunPositionSize = runPositionSize;
+  window.aiRunTradeReview = runTradeReview;
+  window.aiRunSessionDetect = runSessionDetect;
+  window.aiRunNewsCheck = runNewsCheck;
+  window.aiRunBacktest = runBacktest;
+  window.aiLoadLiveLatest = loadLiveLatest;
+  window.aiCheckMlReadiness = aiCheckMlReadiness;
+  window.aiTrainMlModel = aiTrainMlModel;
+
+  document.addEventListener('DOMContentLoaded', function () {
+    const input = document.getElementById('ai-api-base-input');
+    if (input) input.value = getApiBase();
+    aiLoadActiveMlModel();
+
+    // Pre-fill the last symbol/timeframe used on the live feed, so it's not
+    // retyped every visit.
+    const liveSymbolInput = document.getElementById('ai-live-symbol');
+    const liveTimeframeInput = document.getElementById('ai-live-timeframe');
+    const savedLiveSymbol = localStorage.getItem('te_ai_live_symbol');
+    const savedLiveTimeframe = localStorage.getItem('te_ai_live_timeframe');
+    if (liveSymbolInput && savedLiveSymbol) liveSymbolInput.value = savedLiveSymbol;
+    if (liveTimeframeInput && savedLiveTimeframe) liveTimeframeInput.value = savedLiveTimeframe;
+
+    const modeImage = document.getElementById('ai-ca-mode-image');
+    const modeCandles = document.getElementById('ai-ca-mode-candles');
+    const modeLive = document.getElementById('ai-ca-mode-live');
+    const imageInput = document.getElementById('ai-ca-image-input');
+    const candlesInput = document.getElementById('ai-ca-candles-input');
+    const liveInput = document.getElementById('ai-ca-live-input');
+    function syncCaMode() {
+      const current = modeLive.checked ? 'live' : (modeImage.checked ? 'image' : 'candles');
+      imageInput.style.display = current === 'image' ? '' : 'none';
+      candlesInput.style.display = current === 'candles' ? '' : 'none';
+      liveInput.style.display = current === 'live' ? '' : 'none';
+      stopLiveAutoRefresh();
+      if (current !== 'live') {
+        const cb = document.getElementById('ai-live-autorefresh');
+        if (cb) cb.checked = false;
+      }
+    }
+    if (modeImage && modeCandles && modeLive) {
+      modeImage.addEventListener('change', syncCaMode);
+      modeCandles.addEventListener('change', syncCaMode);
+      modeLive.addEventListener('change', syncCaMode);
+      syncCaMode();
+    }
+    const autoRefreshCb = document.getElementById('ai-live-autorefresh');
+    if (autoRefreshCb) {
+      autoRefreshCb.addEventListener('change', function () {
+        if (autoRefreshCb.checked) startLiveAutoRefresh(); else stopLiveAutoRefresh();
+      });
+    }
+
+    // Sprint 17: MT5 auto-journal import init
+    const mt5ImportAutoCb = document.getElementById('ai-mt5-import-autocheck');
+    if (mt5ImportAutoCb) {
+      mt5ImportAutoCb.addEventListener('change', function () {
+        if (mt5ImportAutoCb.checked) startMt5ImportAutoCheck(); else stopMt5ImportAutoCheck();
+      });
+    }
+
+    // Sprint 16: Live Opportunity Scanner init
+    renderScanList();
+    const scanNotifyCb = document.getElementById('ai-scan-notify');
+    if (scanNotifyCb) {
+      scanNotifyCb.checked = localStorage.getItem(SCAN_NOTIFY_KEY) === '1';
+      scanNotifyCb.addEventListener('change', function () {
+        localStorage.setItem(SCAN_NOTIFY_KEY, scanNotifyCb.checked ? '1' : '0');
+        if (scanNotifyCb.checked && typeof Notification !== 'undefined' && Notification.permission === 'default') {
+          Notification.requestPermission();
+        }
+      });
+    }
+    const scanAutoRefreshCb = document.getElementById('ai-scan-autorefresh');
+    if (scanAutoRefreshCb) {
+      // Restore from OUR OWN saved preference, not the browser's native
+      // checkbox-state memory -- the browser can visually re-check this
+      
