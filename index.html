@@ -3057,7 +3057,7 @@ function renderJournal() {
   else if (f === 'forex' || f === 'crypto' || f === 'indices') entries = entries.filter(e => e.asset === f);
 
   // Sort by date descending
-  entries.sort((a, b) => b.date.localeCompare(a.date));
+  entries.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
   if (entries.length === 0) {
     tbody.innerHTML = '';
@@ -3363,7 +3363,7 @@ function renderReview() {
 function renderEquityCurve(entries) {
   const container = document.getElementById('equity-curve-container');
   if (!container) return;
-  const sorted = [...entries].sort((a, b) => a.date.localeCompare(b.date) || 0);
+  const sorted = [...entries].sort((a, b) => (a.date || '').localeCompare(b.date || '') || 0);
   let running = 0;
   const points = sorted.map(e => { running += e.pnl; return running; });
 
@@ -3871,7 +3871,7 @@ function applyDateFilter(trades) {
   
   if (filterType === 'last') {
     // Sort by date descending and return only the last one
-    trades.sort((a, b) => b.date.localeCompare(a.date));
+    trades.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     return trades.length > 0 ? [trades[0]] : [];
   }
   
@@ -4488,8 +4488,9 @@ if ('serviceWorker' in navigator) {
     <div id="ai-coach-output" style="margin-top:1rem;"></div>
   </div>
 
-  <div class="card">
-    <h3 style="margin-bottom:1rem;">Pre-Trade Check</h3>
+  <details class="card" style="margin-bottom:1.5rem;">
+    <summary style="cursor:pointer;font-weight:600;">Pre-Trade Check (older checklist tool — not part of your H4→M15 OB strategy, click to expand)</summary>
+    <p style="font-size:0.78rem;color:var(--text-secondary);margin:0.6rem 0;">This scores a trade against a general weighted checklist (H4 trend, session, news, etc.) from before your current strategy — kept here in case you want it later, not part of your active rules.</p>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Pair</label><input type="text" class="form-input" id="ai-pt-pair" placeholder="EURUSD" list="ai-ca-pair-list" autocomplete="off"></div>
       <div class="form-group"><label class="form-label">Direction</label>
@@ -4515,7 +4516,7 @@ if ('serviceWorker' in navigator) {
     </div>
     <button class="btn btn-primary" onclick="aiRunPretrade()">Check this trade</button>
     <div id="ai-pretrade-output" style="margin-top:1rem;"></div>
-  </div>
+  </details>
 
   <div class="card" style="margin-top:1.5rem;">
     <h3 style="margin-bottom:0.25rem;">Chart Analysis Engine</h3>
@@ -4605,33 +4606,6 @@ if ('serviceWorker' in navigator) {
       <div id="ai-live-status" style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.5rem;">Requires the MT5 EA to be running and pushing data — see the setup guide.</div>
     </div>
 
-    <div style="border:1px dashed var(--border);border-radius:8px;padding:0.75rem;opacity:0.55;margin-bottom:0.75rem;">
-      <div style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.6rem;">
-        The fields below belong to the <strong>Classic Bias</strong> strategy (trend + premium/discount + BOS/CHOCH), which isn't the active strategy right now. Your <strong>H4→M15 Order Block</strong> strategy figures out direction, entry, SL, and TP automatically from real order-block touches in the candle data you paste above — these inputs are currently ignored by the backend. Left in place (not removed) so they work again if Classic Bias is ever reactivated.
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label class="form-label">Direction</label>
-          <select class="form-select" id="ai-ca-direction"><option value="">Auto (use chart bias)</option><option value="buy">Buy</option><option value="sell">Sell</option></select>
-        </div>
-        <div class="form-group"><label class="form-label">Planned R:R</label><input type="number" step="any" class="form-input" id="ai-ca-rr" placeholder="2.0"></div>
-        <div class="form-group"><label class="form-label">Min R:R required</label><input type="number" step="any" class="form-input" id="ai-ca-minrr" placeholder="2.0"></div>
-      </div>
-      <div class="form-row">
-        <div class="form-group" style="display:flex;align-items:center;gap:0.5rem;">
-          <input type="checkbox" id="ai-ca-m15bos" style="width:auto;"><label class="form-label" style="margin:0;text-transform:none;letter-spacing:normal;">M15 BOS confirmed</label>
-        </div>
-        <div class="form-group" style="display:flex;align-items:center;gap:0.5rem;">
-          <input type="checkbox" id="ai-ca-m15choch" style="width:auto;"><label class="form-label" style="margin:0;text-transform:none;letter-spacing:normal;">M15 CHOCH confirmed</label>
-        </div>
-        <div class="form-group" style="display:flex;align-items:center;gap:0.5rem;">
-          <input type="checkbox" id="ai-ca-m15entry" style="width:auto;"><label class="form-label" style="margin:0;text-transform:none;letter-spacing:normal;">M15 entry confirmation</label>
-        </div>
-        <div class="form-group" style="display:flex;align-items:center;gap:0.5rem;">
-          <input type="checkbox" id="ai-ca-sweep" style="width:auto;"><label class="form-label" style="margin:0;text-transform:none;letter-spacing:normal;">Liquidity sweep occurred</label>
-        </div>
-      </div>
-    </div>
-
     <button class="btn btn-primary" onclick="aiRunChartAnalysis()">Analyze chart</button>
     <div id="ai-ca-error" style="margin-top:0.75rem;color:var(--red);font-size:0.85rem;"></div>
 
@@ -4657,54 +4631,26 @@ if ('serviceWorker' in navigator) {
   </div>
 
   <div class="card" style="margin-top:1.5rem;">
-    <h3 style="margin-bottom:0.25rem;">Position Size Calculator</h3>
-    <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem;">Risk-based lot sizing — works for forex, indices, metals, or crypto. Run a Chart Analysis above first and click "Use these levels" to auto-fill entry/SL/TP.</p>
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Account Balance</label><input type="number" step="any" class="form-input" id="ai-ps-balance" placeholder="1000"></div>
-      <div class="form-group"><label class="form-label">Risk %</label><input type="number" step="any" class="form-input" id="ai-ps-risk-percent" placeholder="1.0"></div>
-      <div class="form-group"><label class="form-label">Or Risk $ (overrides %)</label><input type="number" step="any" class="form-input" id="ai-ps-risk-amount" placeholder="optional"></div>
-    </div>
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Entry</label><input type="number" step="any" class="form-input" id="ai-ps-entry" placeholder="0.00"></div>
-      <div class="form-group"><label class="form-label">Stop Loss</label><input type="number" step="any" class="form-input" id="ai-ps-sl" placeholder="0.00"></div>
-      <div class="form-group"><label class="form-label">Take Profit (optional)</label><input type="number" step="any" class="form-input" id="ai-ps-tp" placeholder="0.00"></div>
-    </div>
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Value per point per lot</label><input type="number" step="any" class="form-input" id="ai-ps-vpp" placeholder="e.g. 10"></div>
-      <div class="form-group"><label class="form-label">Lot step</label><input type="number" step="any" class="form-input" id="ai-ps-lotstep" placeholder="0.01" value="0.01"></div>
-    </div>
-    <div style="font-size:0.76rem;color:var(--text-muted);margin-bottom:1rem;">"Value per point per lot" = how much a 1.00 lot position moves in your account currency per 1.0 unit of price change. Check your broker's symbol specification (MT5: right-click a symbol in Market Watch → Specification → "Tick value").</div>
-    <button class="btn btn-primary" onclick="aiRunPositionSize()">Calculate position size</button>
-    <div id="ai-ps-error" style="margin-top:0.75rem;color:var(--red);font-size:0.85rem;"></div>
-    <div id="ai-ps-output" style="margin-top:1rem;"></div>
-  </div>
+    <h3 style="margin-bottom:0.25rem;">Session &amp; News <span style="color:var(--green);font-size:0.7rem;font-weight:normal;">&#9679; LIVE</span></h3>
+    <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem;">Auto-refreshes every 60 seconds — current trading session and any high-impact news due soon, no button needed.</p>
+    <div id="ai-session-output" style="margin-bottom:1rem;"></div>
 
-  <div class="card" style="margin-top:1.5rem;">
-    <h3 style="margin-bottom:0.25rem;">Session &amp; News Check</h3>
-    <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem;">Trading session auto-detection and a high-impact news filter for your planned trade time.</p>
-    <button class="btn" onclick="aiRunSessionDetect()">Detect current session</button>
-    <div id="ai-session-output" style="margin-top:0.75rem;"></div>
-
-    <div style="border-top:1px solid var(--border);margin:1.25rem 0;padding-top:1rem;">
+    <div style="border-top:1px solid var(--border);padding-top:1rem;">
       <div class="form-row">
-        <div class="form-group"><label class="form-label">Planned Trade Time (your local time)</label><input type="datetime-local" class="form-input" id="ai-news-time"></div>
-        <div class="form-group"><label class="form-label">Buffer (minutes)</label><input type="number" step="any" class="form-input" id="ai-news-buffer" placeholder="60" value="60"></div>
-      </div>
-      <div class="form-row">
+        <div class="form-group"><label class="form-label">Look ahead (minutes)</label><input type="number" step="any" class="form-input" id="ai-news-buffer" placeholder="60" value="60"></div>
         <div class="form-group"><label class="form-label">Currencies (optional, comma-separated)</label><input type="text" class="form-input" id="ai-news-currencies" placeholder="USD, EUR"></div>
         <div class="form-group"><label class="form-label">Minimum impact</label>
           <select class="form-select" id="ai-news-min-impact"><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select>
         </div>
       </div>
-      <button class="btn btn-primary" onclick="aiRunNewsCheck()">Check for news</button>
-      <div id="ai-news-error" style="margin-top:0.75rem;color:var(--red);font-size:0.85rem;"></div>
-      <div id="ai-news-output" style="margin-top:0.75rem;"></div>
+      <div id="ai-news-error" style="margin-top:0.5rem;color:var(--red);font-size:0.85rem;"></div>
+      <div id="ai-news-output" style="margin-top:0.5rem;"></div>
     </div>
   </div>
 
-  <div class="card" style="margin-top:1.5rem;">
-    <h3 style="margin-bottom:0.25rem;">Backtest</h3>
-    <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem;">Replays your SMC rules against historical candle data to see how they would have performed. Paste a longer series (50+ candles) for a meaningful sample — no AI, just your existing rules run automatically over the past.</p>
+  <details class="card" style="margin-top:1.5rem;">
+    <summary style="cursor:pointer;font-weight:600;">Backtest (older rules-based replay — not your H4→M15 OB strategy yet, click to expand)</summary>
+    <p style="font-size:0.82rem;color:var(--text-secondary);margin:0.6rem 0 1rem;">Replays the old Classic Bias rules against historical candle data — not your current H4→M15 OB strategy. Kept here in case you want it later.</p>
     <div class="form-group">
       <label class="form-label">Candle data — one bar per line: time,open,high,low,close</label>
       <textarea class="form-input" id="ai-bt-candles" rows="8" placeholder="Paste 50+ candles here, oldest first."></textarea>
@@ -4719,7 +4665,7 @@ if ('serviceWorker' in navigator) {
     <button class="btn btn-primary" onclick="aiRunBacktest()">Run backtest</button>
     <div id="ai-bt-error" style="margin-top:0.75rem;color:var(--red);font-size:0.85rem;"></div>
     <div id="ai-bt-output" style="margin-top:1rem;"></div>
-  </div>
+  </details>
 
   <div class="card" style="margin-top:1.5rem;">
     <h3 style="margin-bottom:0.25rem;">AI Confidence Model (Machine Learning)</h3>
@@ -5043,7 +4989,7 @@ if ('serviceWorker' in navigator) {
       (v.reasonsPassed.length ? '<div class="review-item" style="color:var(--green)">✓ ' + v.reasonsPassed.map(escapeHtml).join('<br>✓ ') + '</div>' : '') +
       (v.reasonsFailed.length ? '<div class="review-item" style="color:var(--red)">✗ ' + v.reasonsFailed.map(escapeHtml).join('<br>✗ ') + '</div>' : '') +
       ((v.suggestedEntry != null || v.stopLoss != null || v.takeProfit != null)
-        ? '<div class="review-item"><strong>Suggested:</strong> Entry ' + (v.suggestedEntry ?? '—') + ' · SL ' + (v.stopLoss ?? '—') + ' · TP ' + (v.takeProfit ?? '—') + (v.riskReward != null ? ' · R:R ' + v.riskReward.toFixed(2) : '') + '<br><button class="btn" style="margin-top:0.5rem;padding:0.3rem 0.6rem;font-size:0.75rem;" onclick="aiUseValidationLevelsInCalculator()">Use these levels in Position Size Calculator</button></div>'
+        ? '<div class="review-item"><strong>Suggested:</strong> Entry ' + (v.suggestedEntry ?? '—') + ' · SL ' + (v.stopLoss ?? '—') + ' · TP ' + (v.takeProfit ?? '—') + (v.riskReward != null ? ' · R:R ' + v.riskReward.toFixed(2) : '') + '</div>'
         : '');
   }
 
@@ -5089,13 +5035,18 @@ if ('serviceWorker' in navigator) {
       return;
     }
 
-    const direction = document.getElementById('ai-ca-direction').value || null;
-    const rr = parseFloat(document.getElementById('ai-ca-rr').value);
-    const minRr = parseFloat(document.getElementById('ai-ca-minrr').value);
-    const hasM15Bos = document.getElementById('ai-ca-m15bos').checked;
-    const hasM15Choch = document.getElementById('ai-ca-m15choch').checked;
-    const hasM15Entry = document.getElementById('ai-ca-m15entry').checked;
-    const hasSweep = document.getElementById('ai-ca-sweep').checked;
+    // Classic Bias inputs (direction override, planned/min R:R, M15 BOS/
+    // CHOCH/entry checkboxes, liquidity sweep) were removed from the UI
+    // entirely per your request -- your only rule is H4->M15 OB touch,
+    // which needs none of these. Sent as harmless defaults below so the
+    // (unrelated) screenshot-analysis request shape doesn't change.
+    const direction = null;
+    const rr = NaN;
+    const minRr = NaN;
+    const hasM15Bos = false;
+    const hasM15Choch = false;
+    const hasM15Entry = false;
+    const hasSweep = false;
 
     try {
       let data;
@@ -5192,58 +5143,6 @@ if ('serviceWorker' in navigator) {
     if (typeof showToast === 'function') showToast('Trade pre-filled from Chart Analysis — review and Save.', 'success');
   }
 
-  function useValidationLevelsInCalculator() {
-    if (!lastChartAnalysisResult) return;
-    const { validation } = lastChartAnalysisResult;
-    const setVal = function (id, value) {
-      const el = document.getElementById(id);
-      if (el && value !== null && value !== undefined) el.value = value;
-    };
-    setVal('ai-ps-entry', validation.suggestedEntry);
-    setVal('ai-ps-sl', validation.stopLoss);
-    setVal('ai-ps-tp', validation.takeProfit);
-    const calcCard = document.getElementById('ai-ps-balance');
-    if (calcCard) calcCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }
-
-  async function runPositionSize() {
-    const errorEl = document.getElementById('ai-ps-error');
-    const outputEl = document.getElementById('ai-ps-output');
-    errorEl.textContent = '';
-    outputEl.innerHTML = '';
-
-    const balance = parseFloat(document.getElementById('ai-ps-balance').value);
-    const riskPercent = parseFloat(document.getElementById('ai-ps-risk-percent').value);
-    const riskAmount = parseFloat(document.getElementById('ai-ps-risk-amount').value);
-    const entry = parseFloat(document.getElementById('ai-ps-entry').value);
-    const sl = parseFloat(document.getElementById('ai-ps-sl').value);
-    const tp = parseFloat(document.getElementById('ai-ps-tp').value);
-    const vpp = parseFloat(document.getElementById('ai-ps-vpp').value);
-    const lotStep = parseFloat(document.getElementById('ai-ps-lotstep').value);
-
-    const body = {
-      accountBalance: isNaN(balance) ? null : balance,
-      riskPercent: isNaN(riskPercent) ? null : riskPercent,
-      riskAmount: isNaN(riskAmount) ? null : riskAmount,
-      entry: isNaN(entry) ? null : entry,
-      stopLoss: isNaN(sl) ? null : sl,
-      takeProfit: isNaN(tp) ? null : tp,
-      valuePerPointPerLot: isNaN(vpp) ? null : vpp,
-      lotStep: isNaN(lotStep) ? 0.01 : lotStep,
-    };
-
-    try {
-      const data = await apiFetch('/api/v1/tools/position-size', { method: 'POST', body: JSON.stringify(body) });
-      outputEl.innerHTML =
-        '<div class="review-item"><strong>Recommended size:</strong> ' + data.recommendedLots + ' lots</div>' +
-        '<div class="review-item">Risking ' + '$' + data.actualRiskAmount.toFixed(2) + ' (target was $' + data.riskAmount.toFixed(2) + ')</div>' +
-        (data.potentialProfit != null ? '<div class="review-item">Potential profit at TP: $' + data.potentialProfit.toFixed(2) + (data.riskReward != null ? ' (R:R ' + data.riskReward.toFixed(2) + ')' : '') + '</div>' : '') +
-        (data.warnings.length ? '<div class="review-item" style="color:var(--red)">⚠ ' + data.warnings.map(escapeHtml).join('<br>⚠ ') + '</div>' : '');
-    } catch (e) {
-      errorEl.textContent = 'Error: ' + e.message;
-    }
-  }
-
   async function runTradeReview() {
     const el = document.getElementById('ai-review-output');
     if (!el) return;
@@ -5308,21 +5207,19 @@ if ('serviceWorker' in navigator) {
     const errorEl = document.getElementById('ai-news-error');
     const el = document.getElementById('ai-news-output');
     errorEl.textContent = '';
-    el.innerHTML = '';
-    const timeVal = document.getElementById('ai-news-time').value;
-    if (!timeVal) { errorEl.textContent = 'Choose a planned trade time first.'; return; }
+    // LIVE: always checks from right now, no manual "planned trade time"
+    // input needed anymore.
     const buffer = parseInt(document.getElementById('ai-news-buffer').value, 10);
     const currenciesRaw = document.getElementById('ai-news-currencies').value.trim();
     const currencies = currenciesRaw ? currenciesRaw.split(',').map(function (s) { return s.trim().toUpperCase(); }).filter(Boolean) : null;
     const minImpact = document.getElementById('ai-news-min-impact').value;
 
     const body = {
-      plannedTime: new Date(timeVal).toISOString(),
+      plannedTime: new Date().toISOString(),
       bufferMinutes: isNaN(buffer) ? 60 : buffer,
       currencies: currencies,
       minImpact: minImpact,
     };
-    el.textContent = 'Checking...';
     try {
       const data = await apiFetch('/api/v1/news/check-calendar', { method: 'POST', body: JSON.stringify(body) });
       const statusColor = data.hasHighImpactNearby ? 'var(--red)' : 'var(--green)';
@@ -5338,6 +5235,22 @@ if ('serviceWorker' in navigator) {
     } catch (e) {
       errorEl.textContent = 'Error: ' + e.message;
     }
+  }
+
+  // LIVE Session & News: runs both on load and every 60s automatically,
+  // no button needed -- matches how the Scanner/MT5-import cards work.
+  let sessionNewsLiveTimer = null;
+  function refreshSessionAndNews() {
+    runSessionDetect();
+    runNewsCheck();
+  }
+  function startSessionNewsLive() {
+    stopSessionNewsLive();
+    refreshSessionAndNews();
+    sessionNewsLiveTimer = setInterval(refreshSessionAndNews, 60000);
+  }
+  function stopSessionNewsLive() {
+    if (sessionNewsLiveTimer) { clearInterval(sessionNewsLiveTimer); sessionNewsLiveTimer = null; }
   }
 
   async function runBacktest() {
@@ -5733,8 +5646,6 @@ if ('serviceWorker' in navigator) {
   window.aiRunPretrade = runPretradeCheck;
   window.aiRunChartAnalysis = runChartAnalysis;
   window.aiSaveChartAnalysisToJournal = saveChartAnalysisToJournal;
-  window.aiUseValidationLevelsInCalculator = useValidationLevelsInCalculator;
-  window.aiRunPositionSize = runPositionSize;
   window.aiRunTradeReview = runTradeReview;
   window.aiRunSessionDetect = runSessionDetect;
   window.aiRunNewsCheck = runNewsCheck;
@@ -5775,4 +5686,58 @@ if ('serviceWorker' in navigator) {
       }
     }
     if (modeImage && modeCandles && modeLive) {
-      modeImage.addEv
+      modeImage.addEventListener('change', syncCaMode);
+      modeCandles.addEventListener('change', syncCaMode);
+      modeLive.addEventListener('change', syncCaMode);
+      syncCaMode();
+    }
+    const autoRefreshCb = document.getElementById('ai-live-autorefresh');
+    if (autoRefreshCb) {
+      autoRefreshCb.addEventListener('change', function () {
+        if (autoRefreshCb.checked) startLiveAutoRefresh(); else stopLiveAutoRefresh();
+      });
+    }
+
+    // Sprint 17: MT5 auto-journal import init
+    const mt5ImportAutoCb = document.getElementById('ai-mt5-import-autocheck');
+    if (mt5ImportAutoCb) {
+      mt5ImportAutoCb.addEventListener('change', function () {
+        if (mt5ImportAutoCb.checked) startMt5ImportAutoCheck(); else stopMt5ImportAutoCheck();
+      });
+    }
+
+    // LIVE Session & News init -- starts immediately, no button
+    startSessionNewsLive();
+
+    // Sprint 16: Live Opportunity Scanner init
+    renderScanList();
+    const scanNotifyCb = document.getElementById('ai-scan-notify');
+    if (scanNotifyCb) {
+      scanNotifyCb.checked = localStorage.getItem(SCAN_NOTIFY_KEY) === '1';
+      scanNotifyCb.addEventListener('change', function () {
+        localStorage.setItem(SCAN_NOTIFY_KEY, scanNotifyCb.checked ? '1' : '0');
+        if (scanNotifyCb.checked && typeof Notification !== 'undefined' && Notification.permission === 'default') {
+          Notification.requestPermission();
+        }
+      });
+    }
+    const scanAutoRefreshCb = document.getElementById('ai-scan-autorefresh');
+    if (scanAutoRefreshCb) {
+      // Restore from OUR OWN saved preference, not the browser's native
+      // checkbox-state memory -- the browser can visually re-check this
+      // box on reload without ever firing a 'change' event, which used
+      // to leave the box looking ON while the 30s timer was actually
+      // never (re)started. Explicitly syncing state + starting the
+      // timer here on load fixes that "looks on, but frozen" bug.
+      scanAutoRefreshCb.checked = localStorage.getItem(SCAN_AUTOREFRESH_KEY) === '1';
+      if (scanAutoRefreshCb.checked) startScanAutoRefresh();
+      scanAutoRefreshCb.addEventListener('change', function () {
+        localStorage.setItem(SCAN_AUTOREFRESH_KEY, scanAutoRefreshCb.checked ? '1' : '0');
+        if (scanAutoRefreshCb.checked) startScanAutoRefresh(); else stopScanAutoRefresh();
+      });
+    }
+  });
+})();
+</script></body>
+</html>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
