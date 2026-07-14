@@ -5606,6 +5606,16 @@ if ('serviceWorker' in navigator) {
       : null;
   }
 
+  // Rough price formatter for the Scanner card -- no per-symbol digit
+  // metadata on the frontend, so this just guesses decimals from
+  // magnitude (indices/crypto ~2, forex ~5), same convention the rest
+  // of the site already uses for display-only price rounding.
+  function fmtLevel(v) {
+    if (v === null || v === undefined || isNaN(v)) return '';
+    const decimals = Math.abs(v) >= 100 ? 2 : 5;
+    return Number(v).toFixed(decimals);
+  }
+
   window.aiScannerScanNow = async function () {
     const list = getScanList();
     const statusEl = document.getElementById('ai-scan-status');
@@ -5663,12 +5673,27 @@ if ('serviceWorker' in navigator) {
         return '<div class="review-item" style="color:var(--text-muted);">' + label + ' &mdash; couldn\'t fetch right now.</div>';
       }
       const isValid = r.tradeStatus === 'VALID';
-      const conf = scanConfidence(r.data);
       const direction = r.data.validation && r.data.validation.direction ? r.data.validation.direction : '';
-      const trend = r.data.analysis && r.data.analysis.trend ? r.data.analysis.trend : '';
+      const v = r.data.validation || {};
+      // Show the STRATEGY'S OWN reasoning (which H4/M15 order block got
+      // touched, or what it's still waiting for) instead of a generic
+      // trend/confidence line -- that line never changed meaningfully
+      // between strategies since it came from an unrelated summary score.
+      const reasons = isValid ? (v.reasonsPassed || []) : (v.reasonsFailed || []);
+      const reasonLine = reasons.length ? reasons.map(escapeHtml).join('<br>') : '';
+      let detailLine = '';
+      if (isValid) {
+        const parts = [];
+        if (v.suggestedEntry != null) parts.push('Entry: ' + fmtLevel(v.suggestedEntry));
+        if (v.stopLoss != null) parts.push('SL: ' + fmtLevel(v.stopLoss));
+        if (v.takeProfit != null) parts.push('TP: ' + fmtLevel(v.takeProfit));
+        if (v.riskReward != null) parts.push('R:R 1:' + Number(v.riskReward).toFixed(2));
+        detailLine = parts.join(' &middot; ');
+      }
       return '<div class="review-item" style="' + (isValid ? 'border-color:var(--green);background:var(--green-dim);' : '') + '">' +
         '<strong style="' + (isValid ? 'color:var(--green);' : '') + '">' + label + ' &mdash; ' + escapeHtml(r.tradeStatus) + (direction ? ' (' + escapeHtml(direction) + ')' : '') + '</strong>' +
-        '<br><span style="font-size:0.78rem;color:var(--text-secondary);">Trend: ' + escapeHtml(trend) + (conf != null ? ' &middot; Confidence: ' + conf + '%' : '') + '</span>' +
+        (detailLine ? '<br><span style="font-size:0.78rem;color:var(--text-secondary);">' + detailLine + '</span>' : '') +
+        (reasonLine ? '<br><span style="font-size:0.76rem;color:' + (isValid ? 'var(--text-secondary)' : 'var(--text-muted)') + ';">' + reasonLine + '</span>' : '') +
         '</div>';
     }).join('') || '<div style="font-size:0.82rem;color:var(--text-muted);">No results.</div>';
 
@@ -5762,35 +5787,4 @@ if ('serviceWorker' in navigator) {
       modeLive.addEventListener('change', syncCaMode);
       syncCaMode();
     }
-    const autoRefreshCb = document.getElementById('ai-live-autorefresh');
-    if (autoRefreshCb) {
-      autoRefreshCb.addEventListener('change', function () {
-        if (autoRefreshCb.checked) startLiveAutoRefresh(); else stopLiveAutoRefresh();
-      });
-    }
-
-    // Sprint 17: MT5 auto-journal import init
-    const mt5ImportAutoCb = document.getElementById('ai-mt5-import-autocheck');
-    if (mt5ImportAutoCb) {
-      mt5ImportAutoCb.addEventListener('change', function () {
-        if (mt5ImportAutoCb.checked) startMt5ImportAutoCheck(); else stopMt5ImportAutoCheck();
-      });
-    }
-
-    // Sprint 16: Live Opportunity Scanner init
-    renderScanList();
-    const scanNotifyCb = document.getElementById('ai-scan-notify');
-    if (scanNotifyCb) {
-      scanNotifyCb.checked = localStorage.getItem(SCAN_NOTIFY_KEY) === '1';
-      scanNotifyCb.addEventListener('change', function () {
-        localStorage.setItem(SCAN_NOTIFY_KEY, scanNotifyCb.checked ? '1' : '0');
-        if (scanNotifyCb.checked && typeof Notification !== 'undefined' && Notification.permission === 'default') {
-          Notification.requestPermission();
-        }
-      });
-    }
-    const scanAutoRefreshCb = document.getElementById('ai-scan-autorefresh');
-    if (scanAutoRefreshCb) {
-      // Restore from OUR OWN saved preference, not the browser's native
-      // checkbox-state memory -- the browser can visually re-check this
-      
+    const autoRefreshCb = 
