@@ -4488,35 +4488,26 @@ if ('serviceWorker' in navigator) {
     <div id="ai-coach-output" style="margin-top:1rem;"></div>
   </div>
 
-  <details class="card" style="margin-bottom:1.5rem;">
-    <summary style="cursor:pointer;font-weight:600;">Pre-Trade Check (older checklist tool — not part of your H4→M15 OB strategy, click to expand)</summary>
-    <p style="font-size:0.78rem;color:var(--text-secondary);margin:0.6rem 0;">This scores a trade against a general weighted checklist (H4 trend, session, news, etc.) from before your current strategy — kept here in case you want it later, not part of your active rules.</p>
+  <div class="card" style="margin-bottom:1.5rem;">
+    <h3 style="margin-bottom:0.25rem;">Pre-Trade Check</h3>
+    <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem;">Runs your official H4→M15 Point-of-Interest strategy on real candles — same engine as Chart Analysis Engine, Live Feed, Scanner, and Backtest. When it's VALID, also shows ML win probability and similar past trades as extra context (never the decision-maker).</p>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Pair</label><input type="text" class="form-input" id="ai-pt-pair" placeholder="EURUSD" list="ai-ca-pair-list" autocomplete="off"></div>
-      <div class="form-group"><label class="form-label">Direction</label>
-        <select class="form-select" id="ai-pt-direction"><option value="buy">Buy</option><option value="sell">Sell</option></select>
+      <div class="form-group"><label class="form-label">Session (optional)</label>
+        <select class="form-select" id="ai-pt-session"><option value="">— Select —</option><option value="Asian">Asian</option><option value="London">London</option><option value="Overlap">Overlap</option><option value="New York">New York</option></select>
       </div>
-      <div class="form-group"><label class="form-label">Planned R:R</label><input type="number" step="any" class="form-input" id="ai-pt-rr" placeholder="2.0"></div>
     </div>
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">H4 Trend</label>
-        <select class="form-select" id="ai-pt-h4trend"><option value="">— Select —</option><option value="Bullish">Bullish</option><option value="Bearish">Bearish</option><option value="Ranging">Ranging</option></select>
-      </div>
-      <div class="form-group"><label class="form-label">Confidence %</label><input type="number" min="0" max="100" step="any" class="form-input" id="ai-pt-confidence" placeholder="80"></div>
+    <div class="form-group">
+      <label class="form-label">H4 candle data — one bar per line: time,open,high,low,close</label>
+      <textarea class="form-input" id="ai-pt-h4-candles" rows="6" placeholder="Paste 10+ H4 candles here, oldest first."></textarea>
     </div>
-    <div class="form-row">
-      <div class="form-group" style="display:flex;align-items:center;gap:0.5rem;margin-top:1.6rem;">
-        <input type="checkbox" id="ai-pt-bos" style="width:auto;">
-        <label class="form-label" style="margin:0;text-transform:none;letter-spacing:normal;">Break of structure (BOS) confirmed</label>
-      </div>
-      <div class="form-group" style="display:flex;align-items:center;gap:0.5rem;margin-top:1.6rem;">
-        <input type="checkbox" id="ai-pt-sweep" style="width:auto;">
-        <label class="form-label" style="margin:0;text-transform:none;letter-spacing:normal;">Liquidity sweep occurred</label>
-      </div>
+    <div class="form-group">
+      <label class="form-label">M15 candle data — one bar per line: time,open,high,low,close</label>
+      <textarea class="form-input" id="ai-pt-m15-candles" rows="6" placeholder="Paste 10+ M15 candles here, oldest first."></textarea>
     </div>
     <button class="btn btn-primary" onclick="aiRunPretrade()">Check this trade</button>
     <div id="ai-pretrade-output" style="margin-top:1rem;"></div>
-  </details>
+  </div>
 
   <div class="card" style="margin-top:1.5rem;">
     <h3 style="margin-bottom:0.25rem;">Chart Analysis Engine</h3>
@@ -4648,24 +4639,26 @@ if ('serviceWorker' in navigator) {
     </div>
   </div>
 
-  <details class="card" style="margin-top:1.5rem;">
-    <summary style="cursor:pointer;font-weight:600;">Backtest (older rules-based replay — not your H4→M15 OB strategy yet, click to expand)</summary>
-    <p style="font-size:0.82rem;color:var(--text-secondary);margin:0.6rem 0 1rem;">Replays the old Classic Bias rules against historical candle data — not your current H4→M15 OB strategy. Kept here in case you want it later.</p>
+  <div class="card" style="margin-top:1.5rem;">
+    <h3 style="margin-bottom:0.25rem;">Backtest</h3>
+    <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem;">Replays your H4→M15 Order Block / Fair Value Gap strategy against real historical candles — H4 and M15 walked together in sync, exactly like live trading. No forced R:R.</p>
+    <div style="font-size:0.76rem;color:var(--text-muted);margin-bottom:0.75rem;">Both candle series need REAL date/times (e.g. <code>2024-01-01T00:00:00</code>), not just labels — the two timeframes are aligned by actual time to avoid any lookahead.</div>
     <div class="form-group">
-      <label class="form-label">Candle data — one bar per line: time,open,high,low,close</label>
-      <textarea class="form-input" id="ai-bt-candles" rows="8" placeholder="Paste 50+ candles here, oldest first."></textarea>
+      <label class="form-label">H4 candle data — one bar per line: time,open,high,low,close</label>
+      <textarea class="form-input" id="ai-bt-candles" rows="6" placeholder="2024-01-01T00:00:00,1.0950,1.0965,1.0940,1.0960&#10;2024-01-01T04:00:00,1.0960,1.0975,1.0955,1.0970"></textarea>
+    </div>
+    <div class="form-group">
+      <label class="form-label">M15 candle data — one bar per line: time,open,high,low,close</label>
+      <textarea class="form-input" id="ai-bt-m15-candles" rows="6" placeholder="2024-01-01T00:00:00,1.0950,1.0958,1.0945,1.0955&#10;2024-01-01T00:15:00,1.0955,1.0962,1.0950,1.0960"></textarea>
     </div>
     <div class="form-row">
-      <div class="form-group"><label class="form-label">Lookback window</label><input type="number" step="1" class="form-input" id="ai-bt-lookback" placeholder="100" value="100"></div>
-      <div class="form-group"><label class="form-label">Min R:R required</label><input type="number" step="any" class="form-input" id="ai-bt-minrr" placeholder="2.0" value="2.0"></div>
-      <div class="form-group"><label class="form-label">Direction</label>
-        <select class="form-select" id="ai-bt-direction"><option value="">Auto (use chart bias)</option><option value="buy">Buy only</option><option value="sell">Sell only</option></select>
-      </div>
+      <div class="form-group"><label class="form-label">Lookback window (H4)</label><input type="number" step="1" class="form-input" id="ai-bt-lookback" placeholder="100" value="100"></div>
+      <div class="form-group"><label class="form-label">Lookback window (M15)</label><input type="number" step="1" class="form-input" id="ai-bt-lookback-m15" placeholder="100" value="100"></div>
     </div>
     <button class="btn btn-primary" onclick="aiRunBacktest()">Run backtest</button>
     <div id="ai-bt-error" style="margin-top:0.75rem;color:var(--red);font-size:0.85rem;"></div>
     <div id="ai-bt-output" style="margin-top:1rem;"></div>
-  </details>
+  </div>
 
   <div class="card" style="margin-top:1.5rem;">
     <h3 style="margin-bottom:0.25rem;">AI Confidence Model (Machine Learning)</h3>
@@ -4902,34 +4895,53 @@ if ('serviceWorker' in navigator) {
   async function runPretradeCheck() {
     const el = document.getElementById('ai-pretrade-output');
     const pair = document.getElementById('ai-pt-pair').value.trim();
-    const direction = document.getElementById('ai-pt-direction').value;
-    const rr = parseFloat(document.getElementById('ai-pt-rr').value);
-    const h4Trend = document.getElementById('ai-pt-h4trend').value;
-    const confidence = parseFloat(document.getElementById('ai-pt-confidence').value);
-    const hasBos = document.getElementById('ai-pt-bos').checked;
-    const hasLiquiditySweep = document.getElementById('ai-pt-sweep').checked;
+    const session = document.getElementById('ai-pt-session').value;
+    const h4Raw = document.getElementById('ai-pt-h4-candles').value;
+    const m15Raw = document.getElementById('ai-pt-m15-candles').value;
     if (!pair) { el.textContent = 'Enter a pair first.'; return; }
+    if (!h4Raw.trim()) { el.textContent = 'Paste H4 candle data first.'; return; }
+    if (!m15Raw.trim()) { el.textContent = 'Paste M15 candle data too.'; return; }
+
+    let h4Candles, m15Candles;
+    try {
+      h4Candles = parseCandlesTextarea(h4Raw);
+      m15Candles = parseCandlesTextarea(m15Raw);
+    } catch (e) {
+      el.textContent = e.message;
+      return;
+    }
+
     el.textContent = 'Checking...';
     try {
       const body = {
         pair: pair,
-        direction: direction,
-        plannedRR: isNaN(rr) ? null : rr,
-        h4Trend: h4Trend || null,
-        confidence: isNaN(confidence) ? null : confidence,
-        hasBos: hasBos,
-        hasLiquiditySweep: hasLiquiditySweep,
+        session: session || null,
+        h4Candles: h4Candles,
+        m15Candles: m15Candles,
       };
       const data = await apiFetch('/api/v1/assistant/pretrade-analysis', { method: 'POST', body: JSON.stringify(body) });
-      const mlLine = data.mlAvailable
-        ? '<div class="review-item" style="font-size:0.78rem;color:var(--text-muted);">ML-powered · model ' + escapeHtml(data.modelVersion || '?') + ' (' + escapeHtml(data.algorithm || '') + ')' + (data.winProbability != null ? ' · win probability ' + (data.winProbability * 100).toFixed(0) + '%' : '') + '</div>'
-        : '<div class="review-item" style="font-size:0.78rem;color:var(--text-muted);">Rule-based estimate only (no trained ML model yet) &mdash; see "AI Confidence Model" below to train one.</div>';
-      el.innerHTML =
-        '<div class="review-item"><strong>Recommendation: ' + escapeHtml(data.recommendation) + '</strong><br>' +
-        'Quality score: ' + (data.tradeQualityScore ?? '—') + ' · Risk: ' + escapeHtml(data.riskLevel) + ' · Confidence: ' + escapeHtml(data.aiConfidence) + '</div>' +
-        mlLine +
-        (data.strengths.length ? '<div class="review-item" style="color:var(--green)">✓ ' + data.strengths.map(escapeHtml).join('<br>✓ ') + '</div>' : '') +
-        (data.weaknesses.length ? '<div class="review-item" style="color:var(--red)">✗ ' + data.weaknesses.map(escapeHtml).join('<br>✗ ') + '</div>' : '');
+      const statusColor = data.tradeStatus === 'VALID' ? 'var(--green)' : 'var(--red)';
+      const finalResult = data.recommendation === 'TAKE' ? ('TAKE — ' + (data.direction || '').toUpperCase()) : 'WAIT';
+      let html =
+        '<div class="review-item"><strong style="color:' + statusColor + ';">' + escapeHtml(data.tradeStatus) + '</strong> — ' + escapeHtml(data.recommendation) + (data.direction ? ' (' + escapeHtml(data.direction) + ')' : '') + '</div>' +
+        renderRuleChecklist(data.ruleChecks, finalResult) +
+        ((data.suggestedEntry != null || data.stopLoss != null || data.takeProfit != null)
+          ? '<div class="review-item"><strong>Suggested:</strong> Entry ' + (data.suggestedEntry ?? '—') + ' · SL ' + (data.stopLoss ?? '—') + ' · TP ' + (data.takeProfit ?? '—') + (data.riskReward != null ? ' · R:R ' + data.riskReward.toFixed(2) : '') + '</div>'
+          : '');
+
+      if (data.tradeStatus === 'VALID') {
+        const mlLine = data.mlAvailable
+          ? '<div class="review-item" style="font-size:0.78rem;color:var(--text-muted);">ML-powered · model ' + escapeHtml(data.modelVersion || '?') + ' (' + escapeHtml(data.algorithm || '') + ')' + (data.winProbability != null ? ' · win probability ' + (data.winProbability * 100).toFixed(0) + '%' : '') + '</div>'
+          : '<div class="review-item" style="font-size:0.78rem;color:var(--text-muted);">Rule-based estimate only (no trained ML model yet) &mdash; see "AI Confidence Model" below to train one.</div>';
+        html +=
+          '<div class="review-item" style="border-top:1px dashed var(--border);padding-top:0.5rem;margin-top:0.5rem;"><em style="font-size:0.76rem;color:var(--text-muted);">Extra context below — informational only, never overrides the decision above:</em></div>' +
+          '<div class="review-item">ML recommendation: ' + escapeHtml(data.mlRecommendation || '—') + ' · Risk: ' + escapeHtml(data.riskLevel) + ' · AI confidence: ' + escapeHtml(data.aiConfidence) + '</div>' +
+          mlLine +
+          (data.strengths.length ? '<div class="review-item" style="color:var(--green)">✓ ' + data.strengths.map(escapeHtml).join('<br>✓ ') + '</div>' : '') +
+          (data.weaknesses.length ? '<div class="review-item" style="color:var(--red)">✗ ' + data.weaknesses.map(escapeHtml).join('<br>✗ ') + '</div>' : '') +
+          (data.historicalReasons.length ? '<div class="review-item" style="color:var(--text-muted);font-size:0.8rem;">' + data.historicalReasons.map(escapeHtml).join('<br>') + '</div>' : '');
+      }
+      el.innerHTML = html;
     } catch (e) {
       el.textContent = 'Error: ' + e.message;
     }
@@ -4961,6 +4973,48 @@ if ('serviceWorker' in navigator) {
       '</div></div>';
   }
 
+  // Shared checklist renderer for the ONE official H4->M15 POI
+  // strategy's ruleChecks array (H4 Order Block/FVG / M15 Order
+  // Block/FVG / POI Alignment / Entry / SL / TP) -- used by Chart
+  // Analysis Engine and Pre-Trade Check so a WAIT always shows exactly
+  // which step is still pending, instead of a single pass/fail flag.
+  // Status wording is tailored per step: POI-touch steps say WAITING
+  // (price just hasn't gotten there yet, nothing is "broken"),
+  // alignment says NOT ALIGNED, and the entry/target step says NO
+  // TARGET FOUND -- NOT_CHECKED steps say NOT CHECKED, except the
+  // final entry/target step which says NOT CALCULATED.
+  function _ruleStatusLabel(rule, status) {
+    if (status === 'PASSED') return { icon: '✅', word: 'PASS', color: 'var(--green)' };
+    if (status === 'NOT_CHECKED') {
+      return rule === 'Entry / SL / TP'
+        ? { icon: '⏸', word: 'NOT CALCULATED', color: 'var(--text-muted)' }
+        : { icon: '⏸', word: 'NOT CHECKED', color: 'var(--text-muted)' };
+    }
+    // FAILED
+    if (rule === 'POI Alignment') return { icon: '❌', word: 'NOT ALIGNED', color: 'var(--red)' };
+    if (rule === 'Entry / SL / TP') return { icon: '❌', word: 'NO TARGET FOUND', color: 'var(--red)' };
+    return { icon: '❌', word: 'WAITING', color: 'var(--red)' };
+  }
+
+  function renderRuleChecklist(ruleChecks, finalResult) {
+    if (!ruleChecks || !ruleChecks.length) return '';
+    const rows = ruleChecks.map(function (c, i) {
+      const label = _ruleStatusLabel(c.rule, c.status);
+      return '<div style="font-size:0.82rem;padding:0.3rem 0;">' +
+        '<div style="font-size:0.72rem;color:var(--text-muted);letter-spacing:0.03em;">STEP ' + (i + 1) + '</div>' +
+        '<strong>' + escapeHtml(c.rule) + '</strong><br>' +
+        '<strong style="color:' + label.color + ';">' + label.icon + ' ' + label.word + '</strong>' +
+        (c.detail ? '<br><span style="color:var(--text-secondary);">' + escapeHtml(c.detail) + '</span>' : '') +
+        '</div>';
+    }).join('');
+    const finalHtml = finalResult
+      ? '<div style="font-size:0.82rem;padding:0.4rem 0;border-top:1px solid var(--border);margin-top:0.3rem;">' +
+        '<div style="font-size:0.72rem;color:var(--text-muted);letter-spacing:0.03em;">FINAL RESULT</div>' +
+        '<strong style="font-size:0.95rem;">' + escapeHtml(finalResult) + '</strong></div>'
+      : '';
+    return '<div class="review-item" style="border-top:1px dashed var(--border);padding-top:0.5rem;margin-top:0.5rem;">' + rows + finalHtml + '</div>';
+  }
+
   function renderChartAnalysis(a) {
     const el = document.getElementById('ai-ca-analysis-output');
     const placeholderBanner = a.isPlaceholder
@@ -4984,10 +5038,10 @@ if ('serviceWorker' in navigator) {
   function renderTradeValidation(v) {
     const el = document.getElementById('ai-ca-validation-output');
     const statusColor = v.tradeStatus === 'VALID' ? 'var(--green)' : 'var(--red)';
+    const finalResult = v.recommendation === 'TAKE' ? ('TAKE — ' + (v.direction || '').toUpperCase()) : 'WAIT';
     el.innerHTML =
       '<div class="review-item"><strong style="color:' + statusColor + ';">' + escapeHtml(v.tradeStatus) + '</strong> — ' + escapeHtml(v.recommendation) + (v.direction ? ' (' + escapeHtml(v.direction) + ')' : '') + '</div>' +
-      (v.reasonsPassed.length ? '<div class="review-item" style="color:var(--green)">✓ ' + v.reasonsPassed.map(escapeHtml).join('<br>✓ ') + '</div>' : '') +
-      (v.reasonsFailed.length ? '<div class="review-item" style="color:var(--red)">✗ ' + v.reasonsFailed.map(escapeHtml).join('<br>✗ ') + '</div>' : '') +
+      renderRuleChecklist(v.ruleChecks, finalResult) +
       ((v.suggestedEntry != null || v.stopLoss != null || v.takeProfit != null)
         ? '<div class="review-item"><strong>Suggested:</strong> Entry ' + (v.suggestedEntry ?? '—') + ' · SL ' + (v.stopLoss ?? '—') + ' · TP ' + (v.takeProfit ?? '—') + (v.riskReward != null ? ' · R:R ' + v.riskReward.toFixed(2) : '') + '</div>'
         : '');
@@ -5260,25 +5314,27 @@ if ('serviceWorker' in navigator) {
     outputEl.innerHTML = '';
 
     const raw = document.getElementById('ai-bt-candles').value;
-    if (!raw.trim()) { errorEl.textContent = 'Paste candle data first (50+ candles for a meaningful sample).'; return; }
+    const rawM15 = document.getElementById('ai-bt-m15-candles').value;
+    if (!raw.trim()) { errorEl.textContent = 'Paste H4 candle data first (50+ bars for a meaningful sample).'; return; }
+    if (!rawM15.trim()) { errorEl.textContent = 'Paste M15 candle data too — this strategy needs both timeframes to replay your rules.'; return; }
 
-    let candles;
+    let candles, m15Candles;
     try {
       candles = parseCandlesTextarea(raw);
+      m15Candles = parseCandlesTextarea(rawM15);
     } catch (e) {
       errorEl.textContent = e.message;
       return;
     }
 
     const lookback = parseInt(document.getElementById('ai-bt-lookback').value, 10);
-    const minRr = parseFloat(document.getElementById('ai-bt-minrr').value);
-    const direction = document.getElementById('ai-bt-direction').value || null;
+    const lookbackM15 = parseInt(document.getElementById('ai-bt-lookback-m15').value, 10);
 
     const body = {
       candles: candles,
+      m15Candles: m15Candles,
       lookbackWindow: isNaN(lookback) ? 100 : lookback,
-      minRr: isNaN(minRr) ? 2.0 : minRr,
-      direction: direction,
+      lookbackWindowM15: isNaN(lookbackM15) ? 100 : lookbackM15,
     };
 
     outputEl.textContent = 'Running backtest...';
@@ -5672,72 +5728,4 @@ if ('serviceWorker' in navigator) {
     const modeCandles = document.getElementById('ai-ca-mode-candles');
     const modeLive = document.getElementById('ai-ca-mode-live');
     const imageInput = document.getElementById('ai-ca-image-input');
-    const candlesInput = document.getElementById('ai-ca-candles-input');
-    const liveInput = document.getElementById('ai-ca-live-input');
-    function syncCaMode() {
-      const current = modeLive.checked ? 'live' : (modeImage.checked ? 'image' : 'candles');
-      imageInput.style.display = current === 'image' ? '' : 'none';
-      candlesInput.style.display = current === 'candles' ? '' : 'none';
-      liveInput.style.display = current === 'live' ? '' : 'none';
-      stopLiveAutoRefresh();
-      if (current !== 'live') {
-        const cb = document.getElementById('ai-live-autorefresh');
-        if (cb) cb.checked = false;
-      }
-    }
-    if (modeImage && modeCandles && modeLive) {
-      modeImage.addEventListener('change', syncCaMode);
-      modeCandles.addEventListener('change', syncCaMode);
-      modeLive.addEventListener('change', syncCaMode);
-      syncCaMode();
-    }
-    const autoRefreshCb = document.getElementById('ai-live-autorefresh');
-    if (autoRefreshCb) {
-      autoRefreshCb.addEventListener('change', function () {
-        if (autoRefreshCb.checked) startLiveAutoRefresh(); else stopLiveAutoRefresh();
-      });
-    }
-
-    // Sprint 17: MT5 auto-journal import init
-    const mt5ImportAutoCb = document.getElementById('ai-mt5-import-autocheck');
-    if (mt5ImportAutoCb) {
-      mt5ImportAutoCb.addEventListener('change', function () {
-        if (mt5ImportAutoCb.checked) startMt5ImportAutoCheck(); else stopMt5ImportAutoCheck();
-      });
-    }
-
-    // LIVE Session & News init -- starts immediately, no button
-    startSessionNewsLive();
-
-    // Sprint 16: Live Opportunity Scanner init
-    renderScanList();
-    const scanNotifyCb = document.getElementById('ai-scan-notify');
-    if (scanNotifyCb) {
-      scanNotifyCb.checked = localStorage.getItem(SCAN_NOTIFY_KEY) === '1';
-      scanNotifyCb.addEventListener('change', function () {
-        localStorage.setItem(SCAN_NOTIFY_KEY, scanNotifyCb.checked ? '1' : '0');
-        if (scanNotifyCb.checked && typeof Notification !== 'undefined' && Notification.permission === 'default') {
-          Notification.requestPermission();
-        }
-      });
-    }
-    const scanAutoRefreshCb = document.getElementById('ai-scan-autorefresh');
-    if (scanAutoRefreshCb) {
-      // Restore from OUR OWN saved preference, not the browser's native
-      // checkbox-state memory -- the browser can visually re-check this
-      // box on reload without ever firing a 'change' event, which used
-      // to leave the box looking ON while the 30s timer was actually
-      // never (re)started. Explicitly syncing state + starting the
-      // timer here on load fixes that "looks on, but frozen" bug.
-      scanAutoRefreshCb.checked = localStorage.getItem(SCAN_AUTOREFRESH_KEY) === '1';
-      if (scanAutoRefreshCb.checked) startScanAutoRefresh();
-      scanAutoRefreshCb.addEventListener('change', function () {
-        localStorage.setItem(SCAN_AUTOREFRESH_KEY, scanAutoRefreshCb.checked ? '1' : '0');
-        if (scanAutoRefreshCb.checked) startScanAutoRefresh(); else stopScanAutoRefresh();
-      });
-    }
-  });
-})();
-</script></body>
-</html>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
+    const candlesInput = document.getElem
