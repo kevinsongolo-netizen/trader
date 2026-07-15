@@ -2567,11 +2567,24 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
 // RULES
 // ============================
 
+// Fixed display order for the Rules page columns -- entry decisions
+// come first when you're actually trading, so Entry Rules always
+// renders leftmost, regardless of whatever order a user's saved/
+// synced state.rules object happens to have its keys in (plain
+// object key order isn't something to rely on for display order).
+// Any category not listed here (e.g. a future custom one) still
+// renders, just after these.
+const RULE_CATEGORY_ORDER = ['entry', 'exit', 'risk', 'session'];
+
 function renderRules() {
   const grid = document.getElementById('rules-grid');
   grid.innerHTML = '';
 
-  Object.entries(state.rules).forEach(([catKey, cat]) => {
+  const allKeys = Object.keys(state.rules);
+  const orderedKeys = RULE_CATEGORY_ORDER.filter(k => allKeys.includes(k))
+    .concat(allKeys.filter(k => !RULE_CATEGORY_ORDER.includes(k)));
+
+  orderedKeys.map(k => [k, state.rules[k]]).forEach(([catKey, cat]) => {
     const col = document.createElement('div');
     col.className = 'rule-category';
     col.innerHTML = `
@@ -3078,8 +3091,8 @@ function renderJournal() {
     return `<tr>
       <td style="font-family:'DM Mono',monospace;font-size:0.82rem;color:var(--text-secondary)">${formatDate(e.date)}</td>
       <td style="font-weight:600">${e.pair}</td>
-      <td><span class="badge badge-${e.direction}">${e.direction.toUpperCase()}</span></td>
-      <td><span class="badge badge-asset ${assetClass}">${e.asset.toUpperCase()}</span></td>
+      <td><span class="badge badge-${e.direction || ''}">${(e.direction || '—').toUpperCase()}</span></td>
+      <td><span class="badge badge-asset ${assetClass}">${(e.asset || '—').toUpperCase()}</span></td>
       <td style="font-family:'DM Mono',monospace;font-size:0.85rem;text-align:center">${lots}</td>
       <td style="font-family:'DM Mono',monospace;font-size:0.85rem">${e.entry || '—'}</td>
       <td style="font-family:'DM Mono',monospace;font-size:0.85rem">${e.exit || '—'}</td>
@@ -4290,8 +4303,8 @@ function showImportPreview(trades) {
       <td style="text-align:center"><input type="checkbox" ${checked} onchange="toggleTradeSelection(${idx})"></td>
       <td style="font-family:'DM Mono',monospace;font-size:0.78rem">${formatDate(t.date)}</td>
       <td style="font-weight:600;font-size:0.85rem">${t.pair}${dupBadge}</td>
-      <td><span class="badge badge-${t.direction}" style="font-size:0.7rem">${t.direction.toUpperCase()}</span></td>
-      <td><span class="badge badge-asset ${t.asset}" style="font-size:0.7rem">${t.asset.toUpperCase()}</span></td>
+      <td><span class="badge badge-${t.direction || ''}" style="font-size:0.7rem">${(t.direction || '—').toUpperCase()}</span></td>
+      <td><span class="badge badge-asset ${t.asset || ''}" style="font-size:0.7rem">${(t.asset || '—').toUpperCase()}</span></td>
       <td style="font-family:'DM Mono',monospace;font-size:0.78rem;text-align:center">${lots}</td>
       <td style="font-family:'DM Mono',monospace;font-size:0.78rem">${t.entry}</td>
       <td style="font-family:'DM Mono',monospace;font-size:0.78rem;color:var(--red)">${sl}</td>
@@ -5591,10 +5604,27 @@ if ('serviceWorker' in navigator) {
     if (!base) { statusEl.textContent = 'Set your backend URL above first.'; return; }
 
     statusEl.textContent = 'Scanning ' + list.length + ' asset(s)...';
+    // Render's free tier puts the backend to sleep after inactivity --
+    // the first request after a while wakes it up (can take 20-40s),
+    // and every OTHER symbol's request fired in the same batch can
+    // time out/fail while that's happening. One retry after a short
+    // delay covers that case instead of showing "couldn't fetch" for
+    // half the list on the first scan after idle time.
+    async function fetchLiveWithRetry(url, attempt) {
+      try {
+        return await fetch(url);
+      } catch (e) {
+        if (attempt >= 1) throw e;
+        await new Promise(function (r) { setTimeout(r, 4000); });
+        return fetchLiveWithRetry(url, attempt + 1);
+      }
+    }
+
     const rows = await Promise.all(list.map(async function (item) {
       const key = item.symbol.toUpperCase() + '|' + item.timeframe.toUpperCase();
       try {
-        const res = await fetch(base + '/api/v1/live/latest?symbol=' + encodeURIComponent(item.symbol) + '&timeframe=' + encodeURIComponent(item.timeframe));
+        const url = base + '/api/v1/live/latest?symbol=' + encodeURIComponent(item.symbol) + '&timeframe=' + encodeURIComponent(item.timeframe);
+        const res = await fetchLiveWithRetry(url, 0);
         if (res.status === 404) {
           return { item: item, key: key, state: 'no-data' };
         }
@@ -5632,7 +5662,7 @@ if ('serviceWorker' in navigator) {
         return '<div class="review-item" style="color:var(--text-muted);">' + label + ' &mdash; no live data yet (check the EA is attached and running).</div>';
       }
       if (r.state === 'error') {
-        return '<div class="review-item" style="color:var(--text-muted);">' + label + ' &mdash; couldn\'t fetch right now.</div>';
+        return '<div class="review-item" style="color:var(--text-muted);">' + label + ' &mdash; couldn\'t fetch right now (if your backend has been idle a while, it may just be waking up -- try Scan now again in ~30s).</div>';
       }
       const isValid = r.tradeStatus === 'VALID';
       const direction = r.data.validation && r.data.validation.direction ? r.data.validation.direction : '';
@@ -5698,34 +5728,4 @@ if ('serviceWorker' in navigator) {
   };
   window.aiSyncTrades = syncTradesToBackend;
   window.aiImportMt5Trades = importMt5Trades;
-  window.aiLoadCoach = loadCoachDeepDive;
-  window.aiRunPretrade = runPretradeCheck;
-  window.aiRunChartAnalysis = runChartAnalysis;
-  window.aiSaveChartAnalysisToJournal = saveChartAnalysisToJournal;
-  window.aiRunTradeReview = runTradeReview;
-  window.aiRunSessionDetect = runSessionDetect;
-  window.aiRunNewsCheck = runNewsCheck;
-  window.aiRunBacktest = runBacktest;
-  window.aiLoadLiveLatest = loadLiveLatest;
-  window.aiCheckMlReadiness = aiCheckMlReadiness;
-  window.aiTrainMlModel = aiTrainMlModel;
-
-  document.addEventListener('DOMContentLoaded', function () {
-    const input = document.getElementById('ai-api-base-input');
-    if (input) input.value = getApiBase();
-    aiLoadActiveMlModel();
-
-    // Pre-fill the last symbol/timeframe used on the live feed, so it's not
-    // retyped every visit.
-    const liveSymbolInput = document.getElementById('ai-live-symbol');
-    const liveTimeframeInput = document.getElementById('ai-live-timeframe');
-    const savedLiveSymbol = localStorage.getItem('te_ai_live_symbol');
-    const savedLiveTimeframe = localStorage.getItem('te_ai_live_timeframe');
-    if (liveSymbolInput && savedLiveSymbol) liveSymbolInput.value = savedLiveSymbol;
-    if (liveTimeframeInput && savedLiveTimeframe) liveTimeframeInput.value = savedLiveTimeframe;
-
-    const modeImage = document.getElementById('ai-ca-mode-image');
-    const modeCandles = document.getElementById('ai-ca-mode-candles');
-    const modeLive = document.getElementById('ai-ca-mode-live');
-    const imageInput = document.getElementById('ai-ca-image-input');
-    const candlesInput = document.getElem
+  window.aiLoa
