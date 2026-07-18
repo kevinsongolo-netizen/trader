@@ -1344,6 +1344,32 @@ body::before {
         <button class="filter-chip" data-filter="indices">Indices</button>
         <button class="filter-chip" data-filter="commodities">Commodities</button>
       </div>
+      <div style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;margin-top:0.6rem;">
+        <input type="text" class="form-input" id="j-search-text" placeholder="Search pair or notes..." style="width:auto;min-width:160px;" oninput="renderJournal()">
+        <select class="form-select" id="j-search-poi" style="width:auto;" onchange="renderJournal()">
+          <option value="">Any setup</option>
+          <option value="Bullish OB">Bullish OB</option>
+          <option value="Bearish OB">Bearish OB</option>
+          <option value="Bullish FVG">Bullish FVG</option>
+          <option value="Bearish FVG">Bearish FVG</option>
+          <option value="Equilibrium">Equilibrium</option>
+          <option value="Premium">Premium</option>
+          <option value="Discount">Discount</option>
+          <option value="Other">Other</option>
+        </select>
+        <select class="form-select" id="j-search-session" style="width:auto;" onchange="renderJournal()">
+          <option value="">Any session</option>
+          <option value="Asian">Asian</option>
+          <option value="London">London</option>
+          <option value="New York">New York</option>
+          <option value="London/NY Overlap">London/NY Overlap</option>
+          <option value="Other">Other</option>
+        </select>
+        <input type="date" class="form-input" id="j-search-date-from" style="width:auto;" onchange="renderJournal()" title="From date">
+        <input type="date" class="form-input" id="j-search-date-to" style="width:auto;" onchange="renderJournal()" title="To date">
+        <button class="btn btn-sm" onclick="clearJournalSearch()">Clear search</button>
+      </div>
+      <div id="journal-similar-search-output" style="margin-top:0.75rem;"></div>
     </div>
     <div class="journal-table-wrap">
       <table class="journal-table">
@@ -1470,6 +1496,17 @@ body::before {
       <button class="btn-icon" onclick="closeJournalModal()">✕</button>
     </div>
     <div class="modal-body">
+      <div id="journal-detail-panel" style="display:none;border:1px solid var(--border);border-radius:var(--radius);padding:0.75rem;margin-bottom:1rem;background:var(--bg-input);">
+        <div id="journal-screenshots-row" style="display:flex;gap:0.75rem;margin-bottom:0.5rem;flex-wrap:wrap;"></div>
+        <div class="form-group" id="journal-exit-screenshot-group" style="display:none;margin-bottom:0.5rem;">
+          <label class="form-label">Attach After-Exit Screenshot (optional)</label>
+          <input type="file" class="form-input" id="j-exit-screenshot-file" accept="image/png,image/jpeg,image/webp" onchange="uploadExitScreenshot(event)">
+          <div id="journal-exit-screenshot-status" style="font-size:0.78rem;color:var(--text-secondary);margin-top:0.35rem;"></div>
+        </div>
+        <div style="font-size:0.72rem;color:var(--text-muted);letter-spacing:0.03em;margin-bottom:0.4rem;">MOST SIMILAR TRADES</div>
+        <div id="journal-similar-output"><div class="review-item" style="color:var(--text-muted);">Loading...</div></div>
+        <div id="journal-lesson-output"></div>
+      </div>
       <div class="form-row">
         <div class="form-group">
           <label class="form-label">Date</label>
@@ -2907,16 +2944,60 @@ function calculateRR() {
   if (rr) rrField.value = rr; // leave manual value untouched if SL/TP incomplete
 }
 
+// Sprint 20 Phase 3 -- screenshot upload state shared with the OTHER
+// <script> block (the one wrapped in "(function () { ... })()" further
+// down the page, holding fillJournalFromExtraction/uploadExitScreenshot/
+// analyzeSetupScreenshot). Declared here, at this script's top level
+// (not inside any function/IIFE), so it's genuinely global and reachable
+// by plain identifier from both scripts -- see the comment next to
+// lastSetupScreenshotUrl in the other block for why it can't just live
+// there instead.
+let pendingEntryScreenshotUrl = null;
+let pendingExitScreenshotUrl = null;
+// Sprint 20 Phase 4 -- the "complete trade fingerprint" ask: carry the
+// timeframe, order type, and the FULL raw vision read (every OB/FVG/
+// BOS/CHoCH/premium-discount/etc. field the AI detected, not just what
+// the journal form shows) from the Chart Analysis screenshot straight
+// onto the trade being saved, same pattern as the screenshot URLs
+// above. Reset to null on every fresh save / new modal open so a
+// leftover fingerprint from a previous screenshot never attaches
+// itself to an unrelated trade.
+let pendingTimeframe = null;
+let pendingOrderType = null;
+let pendingVisionFingerprint = null;
+
 function openJournalModal(editId) {
   state.editingId = editId || null;
   const modal = document.getElementById('journal-modal');
   const title = document.getElementById('modal-title');
 
+  // Sprint 20 Phase 3 -- screenshots + "Most Similar Trades"/lesson only
+  // make sense for a trade that's already logged (a blank Log Trade form
+  // has no history to compare against yet). Pending upload state always
+  // resets on open -- it's re-populated either from the Chart Analysis
+  // flow (fillJournalFromExtraction, right after this call) or a fresh
+  // exit-screenshot upload during this edit session.
+  pendingEntryScreenshotUrl = null;
+  pendingExitScreenshotUrl = null;
+  pendingTimeframe = null;
+  pendingOrderType = null;
+  pendingVisionFingerprint = null;
+  const detailPanel = document.getElementById('journal-detail-panel');
+  const exitShotGroup = document.getElementById('journal-exit-screenshot-group');
+  if (detailPanel) detailPanel.style.display = editId ? '' : 'none';
+  if (exitShotGroup) exitShotGroup.style.display = editId ? '' : 'none';
+  const exitShotStatus = document.getElementById('journal-exit-screenshot-status');
+  if (exitShotStatus) { exitShotStatus.textContent = ''; }
+  const exitShotFile = document.getElementById('j-exit-screenshot-file');
+  if (exitShotFile) exitShotFile.value = '';
+
   if (editId) {
     title.textContent = 'Edit Trade';
     const journal = getCurrentJournal();
     const entry = journal.find(e => e.id === editId);
+    renderJournalScreenshots(entry || null);
     if (entry) {
+      loadTradeDetailInsight(editId);
       document.getElementById('j-date').value = entry.date;
       document.getElementById('j-pair').value = entry.pair;
       document.getElementById('j-direction').value = entry.direction;
@@ -2966,6 +3047,7 @@ function openJournalModal(editId) {
     document.getElementById('calculated-pl-display').textContent = '$0.00';
     document.getElementById('calculated-pl-display').style.color = 'var(--text-muted)';
     resetTags();
+    renderJournalScreenshots(null);
   }
 
   modal.classList.add('visible');
@@ -3000,12 +3082,23 @@ function saveJournalEntry() {
 
   if (!date || !pair) { showToast('Please fill in at least the date and pair.', 'error'); return; }
 
-  const entryData = { 
+  const entryData = {
     date, pair, direction, asset, entry, exit, lots, sl, tp, pnl, rr, poi, session, exitReason,
-    rulesFollowed, worked, failed, notes, workedTags, failedTags 
+    rulesFollowed, worked, failed, notes, workedTags, failedTags
   };
 
   const journal = getCurrentJournal();
+  const existingEntry = state.editingId ? journal.find(e => e.id === state.editingId) : null;
+  entryData.screenshots = buildScreenshotsForSave(existingEntry ? existingEntry.screenshots : []);
+  // Sprint 20 Phase 4 -- carry the timeframe/orderType/full vision
+  // fingerprint read off the Chart Analysis screenshot onto this trade.
+  // Only overwrites when a fresh screenshot was actually analyzed this
+  // session (pending* non-null) -- otherwise keeps whatever the trade
+  // already had, so editing notes on an old trade doesn't wipe its
+  // fingerprint out.
+  entryData.timeframe = pendingTimeframe || (existingEntry ? existingEntry.timeframe : null) || null;
+  entryData.orderType = pendingOrderType || (existingEntry ? existingEntry.orderType : null) || null;
+  entryData.visionFingerprint = pendingVisionFingerprint || (existingEntry ? existingEntry.visionFingerprint : null) || null;
 
   if (state.editingId) {
     const idx = journal.findIndex(e => e.id === state.editingId);
@@ -3015,9 +3108,33 @@ function saveJournalEntry() {
     journal.unshift(entryData);
   }
 
+  pendingEntryScreenshotUrl = null;
+  pendingExitScreenshotUrl = null;
+  pendingTimeframe = null;
+  pendingOrderType = null;
+  pendingVisionFingerprint = null;
+
   saveJournal();
   renderJournal();
   closeJournalModal();
+}
+
+// Sprint 20 Phase 3 -- merges whatever screenshot(s) were just uploaded
+// during this modal session (entry from Chart Analysis, exit from the
+// in-modal file input) into the entry's existing screenshots[], keeping
+// at most one of each kind (a re-upload of the same kind replaces, never
+// duplicates) and leaving anything else untouched.
+function buildScreenshotsForSave(existingScreenshots) {
+  let shots = (existingScreenshots || []).slice();
+  if (pendingEntryScreenshotUrl) {
+    shots = shots.filter(function (s) { return s.kind !== 'entry'; });
+    shots.push({ url: pendingEntryScreenshotUrl, kind: 'entry', uploadedAt: new Date().toISOString() });
+  }
+  if (pendingExitScreenshotUrl) {
+    shots = shots.filter(function (s) { return s.kind !== 'exit'; });
+    shots.push({ url: pendingExitScreenshotUrl, kind: 'exit', uploadedAt: new Date().toISOString() });
+  }
+  return shots;
 }
 
 async function deleteJournalEntry(id) {
@@ -3073,7 +3190,35 @@ function renderJournal() {
   const f = state.filter;
   if (f === 'win') entries = entries.filter(e => e.pnl > 0);
   else if (f === 'loss') entries = entries.filter(e => e.pnl < 0);
-  else if (f === 'forex' || f === 'crypto' || f === 'indices') entries = entries.filter(e => e.asset === f);
+  else if (['forex', 'metals', 'crypto', 'indices', 'commodities'].indexOf(f) !== -1) entries = entries.filter(e => e.asset === f);
+
+  // Sprint 20 Phase 3 #7 -- search/filter by pair, notes, setup (POI),
+  // session, and date range, on top of the existing win/loss/asset
+  // chips above. All client-side over the already-loaded journal --
+  // no backend round-trip needed for a search this small.
+  const searchTextEl = document.getElementById('j-search-text');
+  const searchPoiEl = document.getElementById('j-search-poi');
+  const searchSessionEl = document.getElementById('j-search-session');
+  const searchDateFromEl = document.getElementById('j-search-date-from');
+  const searchDateToEl = document.getElementById('j-search-date-to');
+  const searchText = (searchTextEl && searchTextEl.value || '').trim().toLowerCase();
+  const searchPoi = searchPoiEl && searchPoiEl.value || '';
+  const searchSession = searchSessionEl && searchSessionEl.value || '';
+  const searchDateFrom = searchDateFromEl && searchDateFromEl.value || '';
+  const searchDateTo = searchDateToEl && searchDateToEl.value || '';
+
+  if (searchText) {
+    entries = entries.filter(e =>
+      ((e.pair || '').toLowerCase().indexOf(searchText) !== -1) ||
+      ((e.notes || '').toLowerCase().indexOf(searchText) !== -1) ||
+      ((e.worked || '').toLowerCase().indexOf(searchText) !== -1) ||
+      ((e.failed || '').toLowerCase().indexOf(searchText) !== -1)
+    );
+  }
+  if (searchPoi) entries = entries.filter(e => e.poi === searchPoi);
+  if (searchSession) entries = entries.filter(e => e.session === searchSession);
+  if (searchDateFrom) entries = entries.filter(e => e.date && e.date >= searchDateFrom);
+  if (searchDateTo) entries = entries.filter(e => e.date && e.date <= searchDateTo);
 
   // Sort by date descending
   entries.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
@@ -3094,7 +3239,7 @@ function renderJournal() {
     const notes = e.notes || e.worked || e.failed || '—';
     const lots = e.lots ? parseFloat(e.lots).toFixed(2) : '—';
 
-    return `<tr>
+    return `<tr onclick="if (!['SELECT','BUTTON','OPTION'].includes(event.target.tagName)) openJournalModal('${e.id}')" style="cursor:pointer;" title="Click to edit this trade (set Exit Price, Exit Reason, etc.)">
       <td style="font-family:'DM Mono',monospace;font-size:0.82rem;color:var(--text-secondary)">${formatDate(e.date)}</td>
       <td style="font-weight:600">${e.pair}</td>
       <td><span class="badge badge-${e.direction || ''}">${(e.direction || '—').toUpperCase()}</span></td>
@@ -3145,10 +3290,54 @@ function renderJournal() {
       <td class="notes-cell" title="${escapeHtml(notes)}">${escapeHtml(notes)}</td>
       <td>
         <button class="rule-action-btn" onclick="openJournalModal('${e.id}')" title="Edit">✎</button>
+        <button class="rule-action-btn" onclick="event.stopPropagation(); showSimilarTradesForRow('${e.id}')" title="Find trades similar to this one">🔍</button>
         <button class="rule-action-btn delete" onclick="deleteJournalEntry('${e.id}')" title="Delete">✕</button>
       </td>
     </tr>`;
   }).join('');
+}
+
+// Sprint 20 Phase 3 #7 -- "search by screenshot similarity" in
+// practice: the app doesn't do pixel/image-embedding matching (that
+// needs real ML training infrastructure this project doesn't have),
+// but the same weighted structural similarity that already powers
+// "Most Similar Trades" everywhere else (same pair/direction/POI/
+// trend/stop-target sizing/...) answers the question a trader
+// actually means by that -- "find trades that looked and were set up
+// like this one" -- so this reuses GET /trades/{id}/insight directly.
+async function showSimilarTradesForRow(tradeId) {
+  const el = document.getElementById('journal-similar-search-output');
+  if (!el) return;
+  el.innerHTML = '<div class="review-item" style="color:var(--text-muted);">Finding similar trades...</div>';
+  try {
+    const data = await apiFetch('/api/v1/trades/' + encodeURIComponent(tradeId) + '/insight');
+    const cardsHtml = renderSimilarTradesCards(data.insight && data.insight.topSimilar);
+    // Sprint 20 Phase 5 -- show this trade's OWN screenshot beside the
+    // similar-trade cards, same visual side-by-side as the pre-trade view.
+    const thisEntry = getCurrentJournal().find(function (e) { return e.id === tradeId; });
+    const thisScreenshotUrl = thisEntry && (thisEntry.screenshots || []).find(function (s) { return s.kind === 'entry'; });
+    const currentScreenshotHtml = (cardsHtml && thisScreenshotUrl)
+      ? renderCurrentSetupScreenshotHtml(thisScreenshotUrl.url)
+      : '';
+    el.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+        '<div style="font-size:0.72rem;color:var(--text-muted);letter-spacing:0.03em;">SIMILAR TO THIS TRADE</div>' +
+        '<button class="btn btn-sm" onclick="document.getElementById(\'journal-similar-search-output\').innerHTML=\'\'">Close</button>' +
+      '</div>' +
+      (cardsHtml ? (currentScreenshotHtml + cardsHtml) : '<div class="review-item" style="color:var(--text-muted);">No similar trades found yet.</div>');
+  } catch (e) {
+    el.innerHTML = '<div class="review-item" style="color:var(--text-muted);">Could not load similar trades -- sync this trade to the AI backend first (Sync to AI Backend, in AI Insights).</div>';
+  }
+}
+
+function clearJournalSearch() {
+  const ids = ['j-search-text', 'j-search-poi', 'j-search-session', 'j-search-date-from', 'j-search-date-to'];
+  ids.forEach(function (id) {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  const simEl = document.getElementById('journal-similar-search-output');
+  if (simEl) simEl.innerHTML = '';
+  renderJournal();
 }
 
 // Filter chips
@@ -4541,6 +4730,20 @@ if ('serviceWorker' in navigator) {
   </div>
 
   <div class="card" style="margin-bottom:1.5rem;">
+    <h3 style="margin-bottom:0.25rem;">My Best Setups</h3>
+    <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem;">Win rate, R:R, best session/day, and example screenshots per point-of-interest type &mdash; ranked purely from your own logged trades, not a fixed list of "good" setups. Each one needs at least a few logged trades before it shows up here.</p>
+    <button class="btn" onclick="aiLoadPlaybook()">Load my best setups</button>
+    <div id="ai-playbook-output" style="margin-top:1rem;"></div>
+  </div>
+
+  <div class="card" style="margin-bottom:1.5rem;">
+    <h3 style="margin-bottom:0.25rem;">Your Edge (Best Pattern)</h3>
+    <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem;">Once "My Best Setups" above looks at one thing at a time (just POI type), this looks at the FULL combination &mdash; pair, direction, timeframe, POI type, premium/discount zone, and session all matching at once &mdash; and ranks whichever exact combinations you've actually repeated enough times to call a real pattern. Entirely discovered from your own history; nothing here is a fixed "good setup."</p>
+    <button class="btn" onclick="aiLoadEdgePatterns()">Find my best pattern</button>
+    <div id="ai-edge-patterns-output" style="margin-top:1rem;"></div>
+  </div>
+
+  <div class="card" style="margin-bottom:1.5rem;">
     <h3 style="margin-bottom:0.25rem;">Pre-Trade Check</h3>
     <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem;">Screenshot-first: take one screenshot of your MT5 chart showing your pending order (Entry/SL/TP) and the OB/FVG/BOS/CHoCH your indicator already marked. The AI reads it and compares it to your own past trades &mdash; it never tells you to take or skip a trade, that stays your call.</p>
     <div class="form-group">
@@ -4590,11 +4793,25 @@ if ('serviceWorker' in navigator) {
       <div id="ai-news-error" style="margin-top:0.5rem;color:var(--red);font-size:0.85rem;"></div>
       <div id="ai-news-output" style="margin-top:0.5rem;"></div>
     </div>
+
+    <div style="border-top:1px solid var(--border);margin-top:1rem;padding-top:1rem;">
+      <div style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:0.6rem;">Add your own news event -- always checked alongside the automatic calendar (works even if that calendar isn't configured or is erroring, like a missing/expired API key).</div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Event name</label><input type="text" class="form-input" id="ai-news-manual-name" placeholder="e.g. FOMC Rate Decision"></div>
+        <div class="form-group"><label class="form-label">Currency (optional)</label><input type="text" class="form-input" id="ai-news-manual-currency" placeholder="USD"></div>
+        <div class="form-group"><label class="form-label">Impact</label>
+          <select class="form-select" id="ai-news-manual-impact"><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select>
+        </div>
+        <div class="form-group"><label class="form-label">Date &amp; time</label><input type="datetime-local" class="form-input" id="ai-news-manual-time"></div>
+      </div>
+      <button class="btn" onclick="aiAddManualNewsEvent()">Add event</button>
+      <div id="ai-news-manual-list" style="margin-top:0.75rem;"></div>
+    </div>
   </div>
 
   <div class="card" style="margin-top:1.5rem;">
     <h3 style="margin-bottom:0.25rem;">Margin Buffer <span style="color:var(--green);font-size:0.7rem;font-weight:normal;">&#9679; LIVE</span></h3>
-    <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem;">Your Personal Averaging Strategy runs with no fixed stop loss by design, so this is the real safety net: how close your account is to XM's margin call (50% margin level) and stop-out (20%) thresholds. It only warns -- it never closes anything. Requires the updated MT5 EA (pushes balance/equity/margin each tick).</p>
+    <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem;">A whole-account safety net alongside your per-trade stop losses: how close your account is to XM's margin call (50% margin level) and stop-out (20%) thresholds -- most useful if you have several positions open at once. It only warns -- it never closes anything. Requires the updated MT5 EA (pushes balance/equity/margin each tick).</p>
     <div id="ai-margin-output">Waiting for your MT5 EA to push account data...</div>
   </div>
 
@@ -4653,6 +4870,11 @@ if ('serviceWorker' in navigator) {
       failed: t.failed || null,
       workedTags: t.workedTags || [],
       failedTags: t.failedTags || [],
+      screenshots: t.screenshots || [],
+      // Sprint 20 Phase 4 -- the "complete trade fingerprint" fields.
+      timeframe: t.timeframe || null,
+      orderType: t.orderType || null,
+      visionFingerprint: t.visionFingerprint || null,
     };
   }
 
@@ -4799,9 +5021,44 @@ if ('serviceWorker' in navigator) {
         return;
       }
 
-      let added = 0, updated = 0;
+      // Best-effort match for a screenshot-logged open trade (Pre-Trade
+      // Check / Chart Analysis Engine "Log as open trade") against an
+      // incoming MT5-reported trade for the same real position -- so its
+      // exit price / P&L / R:R / exit reason fill in automatically the
+      // moment MT5 reports the close, instead of creating a second,
+      // duplicate row that still needs the exit typed in by hand. Only
+      // matches entries that aren't already someone else's mt5- row and
+      // don't already have their own exit (a manually-closed entry is
+      // assumed final and never overwritten by this).
+      function findManualMatch(journal, t) {
+        const tEntry = parseFloat(t.entry);
+        if (isNaN(tEntry)) return -1;
+        const tolerance = Math.abs(tEntry) * 0.005; // 0.5% -- covers vision-read rounding, not a different trade
+        let tDate = null;
+        if (t.date) { const d = new Date(t.date); if (!isNaN(d)) tDate = d; }
+        return journal.findIndex(function (j) {
+          if (j.id && j.id.indexOf('mt5-') === 0) return false;
+          if (j.exit !== null && j.exit !== undefined && j.exit !== '') return false;
+          if ((j.pair || '').toUpperCase() !== (t.pair || '').toUpperCase()) return false;
+          if ((j.direction || '').toLowerCase() !== (t.direction || '').toLowerCase()) return false;
+          const jEntry = parseFloat(j.entry);
+          if (isNaN(jEntry) || Math.abs(jEntry - tEntry) > tolerance) return false;
+          if (tDate && j.date) {
+            const jd = new Date(j.date);
+            if (!isNaN(jd) && Math.abs(jd - tDate) > 2 * 24 * 60 * 60 * 1000) return false; // >2 days apart -- not the same trade
+          }
+          return true;
+        });
+      }
+
+      let added = 0, updated = 0, linked = 0;
       items.forEach(function (t) {
-        const idx = journal.findIndex(function (j) { return j.id === t.id; });
+        let idx = journal.findIndex(function (j) { return j.id === t.id; });
+        let isNewLink = false;
+        if (idx < 0) {
+          idx = findManualMatch(journal, t);
+          if (idx >= 0) isNewLink = true;
+        }
         const fields = {
           date: t.date, pair: t.pair, direction: t.direction, asset: t.asset,
           entry: t.entry, exit: t.exit, sl: t.sl, tp: t.tp, lots: t.lots,
@@ -4815,7 +5072,15 @@ if ('serviceWorker' in navigator) {
           Object.keys(fields).forEach(function (k) {
             if (fields[k] !== null && fields[k] !== undefined) existing[k] = fields[k];
           });
-          updated++;
+          if (isNewLink) {
+            // Adopt the MT5 id so future syncs update this exact row
+            // directly (by-id match above) instead of re-matching by
+            // pair/entry/date every time.
+            existing.id = t.id;
+            linked++;
+          } else {
+            updated++;
+          }
         } else {
           journal.unshift(Object.assign({ id: t.id, workedTags: [], failedTags: [] }, fields));
           added++;
@@ -4825,9 +5090,12 @@ if ('serviceWorker' in navigator) {
       if (typeof saveJournal === 'function') saveJournal();
       if (typeof renderJournal === 'function') renderJournal();
 
-      statusEl.textContent = added + ' new, ' + updated + ' updated (of ' + items.length + ' MT5-linked trades checked).';
+      statusEl.textContent = added + ' new, ' + updated + ' updated, ' + linked + ' linked to an existing logged trade (of ' + items.length + ' MT5-linked trades checked).';
       if (added > 0 && typeof showToast === 'function') {
         showToast(added + ' new trade' + (added === 1 ? '' : 's') + ' imported from MT5.', 'success');
+      }
+      if (linked > 0 && typeof showToast === 'function') {
+        showToast(linked + ' logged trade' + (linked === 1 ? '' : 's') + ' auto-updated with MT5\'s exit price.', 'success');
       }
     } catch (e) {
       statusEl.textContent = 'Error: ' + e.message;
@@ -4865,6 +5133,91 @@ if ('serviceWorker' in navigator) {
     }
   }
 
+  // Sprint 20 Phase 3 #6 -- "My Best Setups": one card per POI type the
+  // trader has logged enough times to mean something, ranked purely
+  // from their own history (GET /coach/playbook -> playbook_engine.py).
+  async function loadPlaybook() {
+    const el = document.getElementById('ai-playbook-output');
+    if (!el) return;
+    el.textContent = 'Loading...';
+    try {
+      const data = await apiFetch('/api/v1/coach/playbook');
+      const setups = data.setups || [];
+      if (!setups.length) {
+        el.innerHTML = '<div class="review-item" style="color:var(--text-muted);">Not enough logged trades per setup yet -- keep journaling and this fills in on its own.</div>';
+        return;
+      }
+      el.innerHTML =
+        '<div style="display:flex;flex-wrap:wrap;gap:0.75rem;">' +
+        setups.map(function (s) {
+          const rateColor = s.winRate >= 60 ? 'var(--green)' : (s.winRate < 40 ? 'var(--red)' : 'var(--text-secondary)');
+          const shotsHtml = (s.exampleScreenshots && s.exampleScreenshots.length)
+            ? '<div style="display:flex;gap:0.4rem;margin-top:0.5rem;">' +
+                s.exampleScreenshots.map(function (url) {
+                  return '<a href="' + encodeURI(url) + '" target="_blank" rel="noopener">' +
+                    '<img src="' + encodeURI(url) + '" style="width:90px;height:60px;object-fit:cover;border-radius:6px;border:1px solid var(--border);">' +
+                  '</a>';
+                }).join('') +
+              '</div>'
+            : '';
+          return '<div style="flex:1 1 260px;min-width:240px;max-width:320px;border:1px solid var(--border);background:var(--bg-input);border-radius:8px;padding:0.75rem;">' +
+            '<div style="font-weight:700;margin-bottom:0.3rem;">' + escapeHtml(s.poiType) + '</div>' +
+            '<div style="font-size:0.85rem;color:' + rateColor + ';font-weight:600;">' + Math.round(s.winRate) + '% win rate</div>' +
+            '<div style="font-size:0.78rem;color:var(--text-secondary);">' + s.wins + ' won, ' + s.losses + ' lost' + (s.breakeven ? ', ' + s.breakeven + ' breakeven' : '') + ' of ' + s.count + '</div>' +
+            (s.averageRr != null ? '<div style="font-size:0.78rem;color:var(--text-secondary);">Avg R:R ' + Number(s.averageRr).toFixed(2) + '</div>' : '') +
+            (s.bestSession ? '<div style="font-size:0.78rem;color:var(--text-secondary);">Best session: ' + escapeHtml(s.bestSession) + (s.bestSessionWinRate != null ? ' (' + Math.round(s.bestSessionWinRate) + '%)' : '') + '</div>' : '') +
+            (s.bestDay ? '<div style="font-size:0.78rem;color:var(--text-secondary);">Best day: ' + escapeHtml(s.bestDay) + (s.bestDayWinRate != null ? ' (' + Math.round(s.bestDayWinRate) + '%)' : '') + '</div>' : '') +
+            shotsHtml +
+          '</div>';
+        }).join('') +
+        '</div>' +
+        '<div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.5rem;">Based on ' + data.sampleSize + ' logged trades.</div>';
+    } catch (e) {
+      el.textContent = 'Error: ' + e.message;
+    }
+  }
+
+  // Sprint 20 Phase 5 -- "Best Pattern": the trader's own multi-
+  // dimensional edge (pair+direction+timeframe+POI+zone+session all
+  // matching at once), ranked purely from their own history
+  // (GET /coach/edge-patterns -> edge_pattern_engine.py). Same card
+  // style as loadPlaybook() above, just describing a full combination
+  // instead of a single POI type.
+  async function loadEdgePatterns() {
+    const el = document.getElementById('ai-edge-patterns-output');
+    if (!el) return;
+    el.textContent = 'Loading...';
+    try {
+      const data = await apiFetch('/api/v1/coach/edge-patterns');
+      const patterns = data.patterns || [];
+      if (!patterns.length) {
+        el.innerHTML = '<div class="review-item" style="color:var(--text-muted);">No single pair+direction+timeframe+POI+zone+session combination has repeated enough times yet -- keep journaling with the full screenshot fingerprint and a pattern will surface here on its own.</div>';
+        return;
+      }
+      el.innerHTML =
+        '<div style="display:flex;flex-wrap:wrap;gap:0.75rem;">' +
+        patterns.map(function (p) {
+          const rateColor = p.winRate >= 60 ? 'var(--green)' : (p.winRate < 40 ? 'var(--red)' : 'var(--text-secondary)');
+          return '<div style="flex:1 1 280px;min-width:260px;max-width:340px;border:1px solid var(--border);background:var(--bg-input);border-radius:8px;padding:0.75rem;">' +
+            '<div style="font-weight:700;margin-bottom:0.3rem;">' + escapeHtml(p.pair || '') +
+              (p.direction ? ' &middot; ' + escapeHtml(String(p.direction).toUpperCase()) : '') +
+              (p.timeframe ? ' &middot; ' + escapeHtml(p.timeframe) : '') +
+            '</div>' +
+            '<div style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.3rem;">' +
+              escapeHtml(p.poiType || '') + (p.premiumDiscount ? ' &middot; ' + escapeHtml(p.premiumDiscount) : '') + (p.session ? ' &middot; ' + escapeHtml(p.session) : '') +
+            '</div>' +
+            '<div style="font-size:0.85rem;color:' + rateColor + ';font-weight:600;">' + Math.round(p.winRate) + '% win rate</div>' +
+            '<div style="font-size:0.78rem;color:var(--text-secondary);">' + p.wins + ' won, ' + p.losses + ' lost' + (p.breakeven ? ', ' + p.breakeven + ' breakeven' : '') + ' of ' + p.count + ' trades</div>' +
+            (p.averageRr != null ? '<div style="font-size:0.78rem;color:var(--text-secondary);">Avg R:R ' + Number(p.averageRr).toFixed(2) + '</div>' : '') +
+          '</div>';
+        }).join('') +
+        '</div>' +
+        '<div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.5rem;">Based on ' + data.sampleSize + ' logged trades.</div>';
+    } catch (e) {
+      el.textContent = 'Error: ' + e.message;
+    }
+  }
+
   // Sprint 20 -- screenshot-first workflow. Both Pre-Trade Check and
   // Chart Analysis Engine call the same backend endpoint
   // (/chart/full-analysis/image) and render the same shape:
@@ -4873,18 +5226,65 @@ if ('serviceWorker' in navigator) {
   // history (similarity %, win/loss counts, risk notes), never a
   // VALID/INVALID/TAKE/WAIT gate. The decision stays with you.
   let lastSetupExtraction = null;
+  // Sprint 20 Phase 3 -- the same screenshot just read by Chart Analysis
+  // Engine / Pre-Trade Check, now permanently saved (see
+  // ChartService.full_analysis_from_image -> app/media/image_storage.py).
+  // null whenever screenshot storage isn't configured yet or the upload
+  // failed -- fillJournalFromExtraction() only attaches it when present.
+  let lastSetupScreenshotUrl = null;
+  // Sprint 20 Phase 4 -- the complete raw vision read from the same
+  // screenshot (every field the AI detected, not just what the
+  // extraction/UI shows). Read into pendingVisionFingerprint (and
+  // pendingTimeframe/pendingOrderType) by fillJournalFromExtraction.
+  let lastSetupFingerprint = null;
+  // NOTE: pendingEntryScreenshotUrl/pendingExitScreenshotUrl are declared
+  // at the top level of the OTHER <script> block (with renderJournal/
+  // openJournalModal/saveJournalEntry) rather than here, deliberately --
+  // this whole block is wrapped in an IIFE (see the opening
+  // "(function () {" a few lines up), so a `let` declared in here is
+  // private to this closure and invisible to that other script block.
+  // Those functions need to read AND write these two, so they have to
+  // live somewhere both scripts can see -- the other script's top level
+  // isn't wrapped in an IIFE, so a plain `let` there is genuinely global
+  // and reachable from this closure too (classic <script> tags share one
+  // global scope). Declaring them there and only referencing them by
+  // name here still works correctly via normal scope-chain lookup.
 
   function mapPoiTypeToOption(poiType) {
     if (!poiType) return '';
     const t = poiType.toLowerCase();
-    if (t.indexOf('bullish') !== -1 && t.indexOf('fvg') !== -1) return 'Bullish FVG';
-    if (t.indexOf('bearish') !== -1 && t.indexOf('fvg') !== -1) return 'Bearish FVG';
-    if (t.indexOf('bullish') !== -1 && (t.indexOf('order block') !== -1 || t.indexOf(' ob') !== -1)) return 'Bullish OB';
-    if (t.indexOf('bearish') !== -1 && (t.indexOf('order block') !== -1 || t.indexOf(' ob') !== -1)) return 'Bearish OB';
+    // Word-boundary/looser matching -- the vision model's poiType is a
+    // free-text description (e.g. "Buy Limit at 63909.48, near Bullish
+    // Order Block"), not a fixed enum, so this needs to catch "OB" as a
+    // standalone word, "orderblock" with no space, and "fair value gap"
+    // spelled out, not just the exact phrase "order block"/"fvg".
+    const hasFvg = /\bfvg\b/.test(t) || t.indexOf('fair value gap') !== -1;
+    const hasOb = /\bob\b/.test(t) || t.indexOf('order block') !== -1 || t.indexOf('orderblock') !== -1;
+    const isBullish = t.indexOf('bullish') !== -1;
+    const isBearish = t.indexOf('bearish') !== -1;
+    if (hasFvg && isBullish) return 'Bullish FVG';
+    if (hasFvg && isBearish) return 'Bearish FVG';
+    if (hasOb && isBullish) return 'Bullish OB';
+    if (hasOb && isBearish) return 'Bearish OB';
     if (t.indexOf('premium') !== -1) return 'Premium';
     if (t.indexOf('discount') !== -1) return 'Discount';
     if (t.indexOf('equilibrium') !== -1) return 'Equilibrium';
     return 'Other';
+  }
+
+  // Mirrors GuessAsset() in tools/mt5/TradeEdgeAutoJournal.mq5 exactly
+  // (same keyword lists) so a screenshot-logged trade and an MT5-auto-
+  // imported trade guess the same Asset Class for the same symbol.
+  function guessAssetFromPair(pair) {
+    if (!pair) return '';
+    const s = pair.toUpperCase();
+    if (s.indexOf('XAU') !== -1 || s.indexOf('GOLD') !== -1 || s.indexOf('XAG') !== -1 || s.indexOf('SILVER') !== -1) return 'metals';
+    if (s.indexOf('BTC') !== -1 || s.indexOf('ETH') !== -1 || s.indexOf('CRYPTO') !== -1) return 'crypto';
+    if (s.indexOf('CASH') !== -1 || s.indexOf('US30') !== -1 || s.indexOf('US100') !== -1 ||
+        s.indexOf('GER40') !== -1 || s.indexOf('UK100') !== -1 || s.indexOf('NAS') !== -1 ||
+        s.indexOf('SPX') !== -1 || s.indexOf('DOW') !== -1) return 'indices';
+    if (s.indexOf('OIL') !== -1 || s.indexOf('WTI') !== -1 || s.indexOf('BRENT') !== -1) return 'commodities';
+    return 'forex';
   }
 
   function renderSetupInsight(targetElId, data) {
@@ -4911,8 +5311,26 @@ if ('serviceWorker' in navigator) {
       (extraction.poiType ? '<div class="review-item">' + escapeHtml(extraction.poiType) + (extraction.latestEvent ? ' &middot; ' + escapeHtml(extraction.latestEvent) : '') + '</div>' : '') +
       '<div class="review-item" style="font-size:0.8rem;color:var(--text-secondary);">' + escapeHtml(fmt(extraction.trend)) + ' trend &middot; ' + escapeHtml(fmt(extraction.premiumDiscount)) + ' &middot; read confidence ' + fmt(extraction.readConfidence) + '%</div>';
 
+    // Sprint 20 fix -- the backend deterministically checks whether SL/TP
+    // land on the correct side of entry for the stated direction (a vision
+    // misread can't be auto-corrected, since we don't know which number is
+    // wrong, but it can be flagged loudly instead of presented as fact).
+    const warningHtml = extraction.numberConsistencyWarning
+      ? '<div class="review-item" style="border-color:var(--red);color:var(--red);">&#9888; ' + escapeHtml(extraction.numberConsistencyWarning) + '</div>'
+      : '';
+
     let statsHtml = '';
-    if (insight.hasEnoughHistory && insight.sampleSize > 0) {
+    if (insight.hasEnoughHistory && insight.sampleSize > 0 && insight.lowConfidence) {
+      // Sprint 20 Phase 4 -- 1-2 similar trades isn't a win rate, it's a
+      // coin flip. No confidence bar, no percentage -- just the raw
+      // counts and an explicit "don't trust this yet" note (the
+      // narrative already says the same thing in plain language below,
+      // this is the same message surfaced where the stat itself used to be).
+      statsHtml = '<div class="review-item" style="border-color:var(--yellow, #e0a800);color:var(--yellow, #e0a800);">' +
+        '&#9888; Low confidence &mdash; only ' + insight.sampleSize + ' similar trade' + (insight.sampleSize !== 1 ? 's' : '') + ' available' +
+        ' (' + insight.wins + 'W/' + insight.losses + 'L' + (insight.breakeven ? '/' + insight.breakeven + 'BE' : '') + '). Continue journaling before relying on this statistic.' +
+        '</div>';
+    } else if (insight.hasEnoughHistory && insight.sampleSize > 0) {
       statsHtml = confidenceBar('Historical win rate (similar setups)', Math.round(insight.winRate || 0)) +
         '<div style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:0.5rem;">' + insight.wins + ' won, ' + insight.losses + ' lost' + (insight.breakeven ? ', ' + insight.breakeven + ' breakeven' : '') + ' out of ' + insight.sampleSize + ' similar trades</div>';
     }
@@ -4925,17 +5343,163 @@ if ('serviceWorker' in navigator) {
       return '<div class="review-item" style="color:#e0a800;">' + escapeHtml(line) + '</div>';
     }).join('');
 
-    const topSimilarHtml = (insight.topSimilar && insight.topSimilar.length)
-      ? '<div class="review-item" style="border-top:1px dashed var(--border);padding-top:0.5rem;margin-top:0.5rem;">' +
-          '<div style="font-size:0.72rem;color:var(--text-muted);letter-spacing:0.03em;">CLOSEST MATCHES</div>' +
-          insight.topSimilar.map(function (s) {
-            const color = s.outcome === 'Win' ? 'var(--green)' : (s.outcome === 'Loss' ? 'var(--red)' : 'var(--text-muted)');
-            return '<div style="font-size:0.82rem;padding:0.2rem 0;">' + Math.round(s.similarity) + '% similar — <strong style="color:' + color + ';">' + escapeHtml(s.outcome || '') + '</strong>' + (s.date ? ' (' + escapeHtml(s.date) + ')' : '') + (s.pnl != null ? ' — $' + Number(s.pnl).toFixed(2) : '') + '</div>';
-          }).join('') +
-        '</div>'
+    // Sprint 20 Phase 2 -- visual trade-memory cards: each closest match
+    // gets its own card (similarity %, outcome, R-multiple) plus the
+    // specific reasons the backend's similarity engine found it similar
+    // (same direction, similar stop size, same POI type, ...) instead of
+    // a plain one-line list with no explanation of "why". Shared with
+    // the Sprint 20 Phase 3 journal trade detail view -- see
+    // renderSimilarTradesCards().
+    const topSimilarHtml = renderSimilarTradesCards(insight.topSimilar);
+    const characteristicGapsHtml = renderCharacteristicGapsHtml(insight.characteristicGaps);
+    // Sprint 20 Phase 5 -- "show the screenshot of every similar trade":
+    // put THIS setup's own screenshot right above the similar-trade
+    // cards so the visual comparison is literally side by side, only
+    // when there's actually a similar-trade section to compare it to.
+    const currentSetupScreenshotHtml = (insight.topSimilar && insight.topSimilar.length)
+      ? renderCurrentSetupScreenshotHtml(meta.screenshotUrl)
       : '';
 
-    el.innerHTML = placeholderBanner + extractionHtml + statsHtml + narrativeHtml + riskNotesHtml + topSimilarHtml;
+    el.innerHTML = placeholderBanner + extractionHtml + warningHtml + statsHtml + narrativeHtml + riskNotesHtml + currentSetupScreenshotHtml + topSimilarHtml + characteristicGapsHtml;
+  }
+
+  // Sprint 20 Phase 4 -- "what do my winners have that this doesn't /
+  // what do my losers have that this also has?" Purely descriptive,
+  // never a verdict -- same wording style as riskNotes. Shared by the
+  // pre-trade Chart Analysis insight (renderSetupInsight, above) and the
+  // journal trade detail view (loadTradeDetailInsight, below), same as
+  // renderSimilarTradesCards(). Returns '' whenever the engine didn't
+  // have enough similar wins/losses to say anything honest.
+  function renderCharacteristicGapsHtml(gaps) {
+    const gapLines = gaps ? (gaps.winnerGaps || []).concat(gaps.loserEchoes || []) : [];
+    // Sprint 20 Phase 5 -- "This setup matches N of M characteristics
+    // your winning trades typically have" is worth showing on its own
+    // even when there are zero individual gap lines (a setup that
+    // matches every one of its winning profile's characteristics has
+    // nothing to list as a "gap", but that's exactly the point worth
+    // surfacing -- shown first, bolded, above the individual lines.
+    const summaryHtml = (gaps && gaps.winnerMatchSummary)
+      ? '<div class="review-item" style="font-size:0.85rem;font-weight:600;">' + escapeHtml(gaps.winnerMatchSummary) + '</div>'
+      : '';
+    if (!gapLines.length && !summaryHtml) return '';
+    return '<div style="border-top:1px dashed var(--border);padding-top:0.6rem;margin-top:0.5rem;">' +
+        '<div style="font-size:0.72rem;color:var(--text-muted);letter-spacing:0.03em;margin-bottom:0.4rem;">VS. YOUR WINNERS &amp; LOSERS</div>' +
+        summaryHtml +
+        gapLines.map(function (line) {
+          return '<div class="review-item" style="font-size:0.85rem;">' + escapeHtml(line) + '</div>';
+        }).join('') +
+      '</div>';
+  }
+
+  // Sprint 20 Phase 2/3 -- "MOST SIMILAR TRADES" cards, shared by the
+  // pre-trade Chart Analysis Engine insight (renderSetupInsight, above)
+  // and the journal trade detail view (loadTradeDetailInsight, below) --
+  // "similar" means the exact same thing (and looks the same) in both
+  // places since they're both rendering the same backend shape
+  // (SimilarTradeSummary[]).
+  // Sprint 20 Phase 5 -- a small clickable thumbnail of a trade's own
+  // pre-trade screenshot, shared by the current-setup preview
+  // (renderCurrentSetupScreenshotHtml, below) and each similar-trade
+  // card. Opens the full-size image in a new tab on click -- no lightbox
+  // needed for a quick visual side-by-side. '' when there's no URL
+  // (trade logged before screenshots existed, or storage wasn't
+  // configured), same as everywhere else that degrades honestly.
+  function renderScreenshotThumbHtml(url, altLabel) {
+    if (!url) return '';
+    return '<a href="' + encodeURI(url) + '" target="_blank" rel="noopener" style="display:block;margin-top:0.4rem;">' +
+        '<img src="' + encodeURI(url) + '" alt="' + escapeHtml(altLabel || 'Trade screenshot') + '" ' +
+          'style="width:100%;max-height:110px;object-fit:cover;border-radius:6px;border:1px solid var(--border);display:block;">' +
+      '</a>';
+  }
+
+  // Sprint 20 Phase 5 -- "current setup screenshot beside each similar
+  // trade" -- shows the screenshot Chart Analysis just read, right above
+  // the MOST SIMILAR TRADES cards, so the visual comparison the trader
+  // asked for is literally on screen at once: this setup, then #1/#2/#3.
+  function renderCurrentSetupScreenshotHtml(url) {
+    if (!url) return '';
+    return '<div style="margin-top:0.5rem;">' +
+        '<div style="font-size:0.72rem;color:var(--text-muted);letter-spacing:0.03em;margin-bottom:0.3rem;">THIS SETUP</div>' +
+        renderScreenshotThumbHtml(url, 'Current setup screenshot') +
+      '</div>';
+  }
+
+  function renderSimilarTradesCards(topSimilar) {
+    if (!topSimilar || !topSimilar.length) return '';
+    return '<div style="border-top:1px dashed var(--border);padding-top:0.6rem;margin-top:0.5rem;">' +
+        '<div style="font-size:0.72rem;color:var(--text-muted);letter-spacing:0.03em;margin-bottom:0.4rem;">MOST SIMILAR TRADES</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:0.6rem;">' +
+        topSimilar.map(function (s, i) {
+          const isWin = s.outcome === 'Win';
+          const isLoss = s.outcome === 'Loss';
+          const color = isWin ? 'var(--green)' : (isLoss ? 'var(--red)' : 'var(--text-muted)');
+          const bg = isWin ? 'var(--green-dim)' : (isLoss ? 'rgba(220,80,80,0.08)' : 'var(--bg-input)');
+          const reasonsHtml = (s.reasons && s.reasons.length)
+            ? '<div style="font-size:0.74rem;color:var(--text-secondary);margin-top:0.35rem;">' +
+                s.reasons.map(function (r) { return '&#8226; ' + escapeHtml(r); }).join('<br>') +
+              '</div>'
+            : '';
+          const thumbHtml = renderScreenshotThumbHtml(s.screenshotUrl, 'Trade #' + (i + 1) + ' screenshot');
+          // Sprint 20 Phase 5 -- "explain why the similarity score is
+          // what it is": a full matched/mismatched checklist across
+          // every dimension that was actually compared, tucked behind a
+          // "Why X% similar?" toggle so the compact card grid doesn't
+          // balloon by default, but the full answer is one click away.
+          const breakdownId = 'sim-breakdown-' + (s.id || i) + '-' + Math.random().toString(36).slice(2, 8);
+          const breakdownRowsHtml = (s.breakdown && s.breakdown.length)
+            ? s.breakdown.map(function (b) {
+                const markColor = b.matched ? 'var(--green)' : 'var(--red)';
+                const mark = b.matched ? '✓' : '✗';
+                const verb = b.matched ? 'Same' : 'Different';
+                return '<div style="font-size:0.72rem;color:var(--text-secondary);">' +
+                  '<span style="color:' + markColor + ';font-weight:700;">' + mark + '</span> ' + verb + ' ' + escapeHtml(b.label) +
+                '</div>';
+              }).join('')
+            : '';
+          const breakdownHtml = breakdownRowsHtml
+            ? '<div style="margin-top:0.35rem;">' +
+                '<a href="javascript:void(0)" onclick="var el=document.getElementById(\'' + breakdownId + '\');if(el)el.style.display=(el.style.display===\'none\'?\'block\':\'none\');" style="font-size:0.72rem;color:var(--accent);">Why ' + Math.round(s.similarity) + '% similar? &#9662;</a>' +
+                '<div id="' + breakdownId + '" style="display:none;margin-top:0.3rem;padding-top:0.3rem;border-top:1px dashed var(--border);">' +
+                  breakdownRowsHtml +
+                  '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:0.25rem;font-weight:600;">Overall similarity: ' + Math.round(s.similarity) + '%</div>' +
+                '</div>' +
+              '</div>'
+            : '';
+          return '<div style="flex:1 1 220px;min-width:200px;max-width:280px;border:1px solid ' + color + ';background:' + bg + ';border-radius:8px;padding:0.6rem 0.75rem;">' +
+            '<div style="font-size:0.72rem;color:var(--text-muted);">Trade #' + (i + 1) + (s.date ? ' &middot; ' + escapeHtml(s.date) : '') + '</div>' +
+            '<div style="font-size:0.95rem;font-weight:700;color:' + color + ';margin-top:0.15rem;">' + Math.round(s.similarity) + '% Similar</div>' +
+            '<div style="font-size:0.85rem;margin-top:0.1rem;"><strong style="color:' + color + ';">' + escapeHtml(s.outcome || '') + '</strong>' +
+              (s.rMultiple ? ' &middot; <strong>' + escapeHtml(s.rMultiple) + '</strong>' : '') +
+              (s.pnl != null ? ' &middot; $' + Number(s.pnl).toFixed(2) : '') +
+            '</div>' +
+            thumbHtml +
+            reasonsHtml +
+            breakdownHtml +
+          '</div>';
+        }).join('') +
+        '</div>' +
+      '</div>';
+  }
+
+  // Sprint 20 Phase 2/4 -- the "vs. your own history" planned-vs-actual
+  // block, shared by the AI Review (after close) button (runTradeReview,
+  // below) and the journal trade detail view (loadTradeDetailInsight).
+  // Accepts the common shape {hasEnoughHistory, sampleSize, wins, losses,
+  // lessons, patterns} -- runTradeReview() maps TradeReviewResult's
+  // similarSampleSize/similarWins/similarLosses field names onto it.
+  function renderLessonSection(lesson) {
+    if (!lesson) return '';
+    const lessonsHtml = (lesson.lessons && lesson.lessons.length) ? '<br>' + lesson.lessons.map(escapeHtml).join('<br>') : '';
+    const patternsHtml = (lesson.patterns && lesson.patterns.length) ? '<br>' + lesson.patterns.map(escapeHtml).join('<br>') : '';
+    if (lesson.hasEnoughHistory) {
+      return '<div class="review-item" style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px;">' +
+          '<strong>Vs. your own history</strong> <span style="color:var(--text-muted);font-size:0.8rem;">(' + lesson.wins + 'W / ' + lesson.losses + 'L of ' + lesson.sampleSize + ' similar trades)</span>' +
+          lessonsHtml + patternsHtml +
+        '</div>';
+    }
+    return lessonsHtml
+      ? '<div class="review-item" style="color:var(--text-muted);font-size:0.8rem;border-top:1px solid var(--border);padding-top:8px;margin-top:8px;">' + lesson.lessons.map(escapeHtml).join('<br>') + '</div>'
+      : '';
   }
 
   async function analyzeSetupScreenshot(fileInputId, targetElId, errorElId) {
@@ -4946,9 +5510,26 @@ if ('serviceWorker' in navigator) {
     if (!file) { if (errorEl) errorEl.textContent = 'Choose a chart screenshot first.'; return null; }
     const form = new FormData();
     form.append('file', file);
+    // Sprint 20 Phase 5 -- the vision model can't read "session" off a
+    // screenshot, so pass in the CURRENTLY detected session (the same
+    // call fillJournalFromExtraction already made, just moved earlier)
+    // as a hint -- lets the live pre-trade similarity comparison use
+    // session as a fingerprint dimension too, not just already-saved
+    // trades. Best-effort: on failure, this candidate simply skips the
+    // session dimension, same as it always has.
+    try {
+      const sessionData = await apiFetch('/api/v1/tools/session-detect', { method: 'POST', body: JSON.stringify({}) });
+      const sessionOption = mapPrimarySessionToOption(sessionData.primarySession);
+      if (sessionOption) form.append('session_hint', sessionOption);
+    } catch (e) { /* best-effort only -- proceed without a session hint */ }
     try {
       const data = await apiFetchMultipart('/api/v1/chart/full-analysis/image', { method: 'POST', body: form });
       lastSetupExtraction = data.extraction;
+      lastSetupScreenshotUrl = (data.meta && data.meta.screenshotUrl) || null;
+      // Sprint 20 Phase 4 -- the complete raw vision read, carried
+      // through fillJournalFromExtraction into the saved trade's
+      // timeframe/orderType/visionFingerprint fields.
+      lastSetupFingerprint = data.fingerprint || null;
       renderSetupInsight(targetElId, data);
       return data;
     } catch (e) {
@@ -4957,12 +5538,32 @@ if ('serviceWorker' in navigator) {
     }
   }
 
-  function fillJournalFromExtraction(extraction) {
+  // Session dropdown only offers Asian/London/New York/London-NY Overlap/
+  // Other -- map the session-detect engine's primarySession onto those
+  // exact values (it already uses the same strings by design, except
+  // "Between sessions" which doesn't correspond to any of them).
+  function mapPrimarySessionToOption(primarySession) {
+    if (!primarySession) return '';
+    if (['Asian', 'London', 'New York', 'London/NY Overlap'].indexOf(primarySession) !== -1) return primarySession;
+    return 'Other';
+  }
+
+  async function fillJournalFromExtraction(extraction) {
     if (!extraction) {
       if (typeof showToast === 'function') showToast('Analyze a screenshot first.', 'error');
       return;
     }
     if (typeof openJournalModal === 'function') openJournalModal();
+    // Carry the screenshot Chart Analysis / Pre-Trade Check just read
+    // (and saved) straight onto this new journal entry -- no second
+    // upload needed. null when screenshot storage isn't configured yet.
+    pendingEntryScreenshotUrl = lastSetupScreenshotUrl || null;
+    // Sprint 20 Phase 4 -- carry timeframe/orderType/the full vision
+    // fingerprint through to saveJournalEntry() the same way.
+    pendingTimeframe = extraction.timeframe || null;
+    pendingOrderType = extraction.orderType || null;
+    pendingVisionFingerprint = lastSetupFingerprint || null;
+    renderJournalScreenshots(null);
     const setVal = function (id, value) {
       const el = document.getElementById(id);
       if (el && value !== null && value !== undefined && value !== '') el.value = value;
@@ -4970,14 +5571,29 @@ if ('serviceWorker' in navigator) {
     setVal('j-pair', extraction.pair);
     const dir = (extraction.orderDirection || '').toLowerCase();
     if (dir === 'buy' || dir === 'sell') setVal('j-direction', dir);
+    const assetOption = guessAssetFromPair(extraction.pair);
+    if (assetOption) setVal('j-asset', assetOption);
     setVal('j-entry', extraction.entry);
     setVal('j-sl', extraction.stopLoss);
     setVal('j-tp', extraction.takeProfit);
+    setVal('j-lots', extraction.lots);
     setVal('j-rr', extraction.riskReward);
     const poiOption = mapPoiTypeToOption(extraction.poiType);
     if (poiOption) setVal('j-poi', poiOption);
     setVal('j-notes', 'Logged from a screenshot-read setup' + (extraction.timeframe ? ' (' + extraction.timeframe + ').' : '.'));
     if (typeof showToast === 'function') showToast('Trade pre-filled from your screenshot — review and Save.', 'success');
+
+    // Auto-fill Session from the live session-detect engine -- the
+    // screenshot itself doesn't show a session, but you're logging this
+    // at (or shortly after) the moment you took it, so the current
+    // detected session is the right value almost all of the time. Best
+    // effort: if this fails (e.g. backend still waking up), the Session
+    // field is simply left on "— Select —" for you to set manually.
+    try {
+      const sessionData = await apiFetch('/api/v1/tools/session-detect', { method: 'POST', body: JSON.stringify({}) });
+      const sessionOption = mapPrimarySessionToOption(sessionData.primarySession);
+      if (sessionOption) setVal('j-session', sessionOption);
+    } catch (e) { /* best-effort only -- leave Session unset on failure */ }
   }
 
   async function runPretradeCheck() {
@@ -5079,6 +5695,97 @@ if ('serviceWorker' in navigator) {
     fillJournalFromExtraction(lastSetupExtraction);
   }
 
+  // Sprint 20 Phase 3 -- entry/exit screenshot thumbnails at the top of
+  // the trade detail view (the Edit Trade modal). Click through to the
+  // full-size image (Cloudinary URL) in a new tab. entry is null for a
+  // brand-new Log Trade with nothing saved yet.
+  function renderJournalScreenshots(entry) {
+    const row = document.getElementById('journal-screenshots-row');
+    if (!row) return;
+    const shots = (entry && entry.screenshots) || [];
+    const entryShot = shots.find(function (s) { return s.kind === 'entry'; });
+    const exitShot = shots.find(function (s) { return s.kind === 'exit'; });
+    function thumb(shot, label) {
+      if (!shot || !shot.url) return '';
+      return '<a href="' + encodeURI(shot.url) + '" target="_blank" rel="noopener" style="display:inline-block;text-align:center;text-decoration:none;">' +
+        '<img src="' + encodeURI(shot.url) + '" alt="' + label + ' screenshot" style="width:130px;height:86px;object-fit:cover;border-radius:6px;border:1px solid var(--border);display:block;">' +
+        '<div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">' + label + '</div>' +
+      '</a>';
+    }
+    // pendingEntryScreenshotUrl covers the case where fillJournalFromExtraction
+    // just attached a fresh entry screenshot to a not-yet-saved trade --
+    // show it immediately rather than waiting for Save.
+    const effectiveEntryShot = entryShot || (pendingEntryScreenshotUrl ? { url: pendingEntryScreenshotUrl } : null);
+    const html = thumb(effectiveEntryShot, 'Entry') + thumb(exitShot, 'Exit');
+    row.innerHTML = html;
+    row.style.display = html ? 'flex' : 'none';
+  }
+
+  // Sprint 20 Phase 3 -- "Most Similar Trades" + planned-vs-actual lesson
+  // for an ALREADY-SAVED journal trade, loaded automatically the moment
+  // the Edit Trade modal opens (no button click needed) -- reuses
+  // renderSimilarTradesCards()/renderLessonSection() so this looks and
+  // reads exactly like the pre-trade Chart Analysis Engine insight.
+  async function loadTradeDetailInsight(tradeId) {
+    const simEl = document.getElementById('journal-similar-output');
+    const lessonEl = document.getElementById('journal-lesson-output');
+    if (!simEl || !lessonEl) return;
+    simEl.innerHTML = '<div class="review-item" style="color:var(--text-muted);">Loading...</div>';
+    lessonEl.innerHTML = '';
+    try {
+      const data = await apiFetch('/api/v1/trades/' + encodeURIComponent(tradeId) + '/insight');
+      const insight = data.insight || {};
+      const cardsHtml = renderSimilarTradesCards(insight.topSimilar);
+      const gapsHtml = renderCharacteristicGapsHtml(insight.characteristicGaps);
+      simEl.innerHTML = (cardsHtml || (
+        '<div class="review-item" style="color:var(--text-muted);font-size:0.85rem;">' +
+        escapeHtml((insight.narrative && insight.narrative[insight.narrative.length - 1]) || 'No similar trades found yet.') +
+        '</div>'
+      )) + gapsHtml;
+      lessonEl.innerHTML = renderLessonSection(data.lesson);
+    } catch (e) {
+      // Most likely this trade was logged locally but never synced to
+      // the AI backend yet (GET /trades/{id}/insight 404s on an id it's
+      // never seen) -- say so plainly rather than a raw error string.
+      simEl.innerHTML = '<div class="review-item" style="color:var(--text-muted);font-size:0.85rem;">' +
+        'Could not load similar trades yet -- sync this trade to the AI backend first (Sync to AI Backend, in AI Insights), then reopen it.' +
+        '</div>';
+    }
+  }
+
+  // Sprint 20 Phase 3 -- optional "how it actually played out" screenshot,
+  // attached to an already-logged trade with no vision re-analysis (just
+  // permanent storage). Best-effort: if Cloudinary isn't configured on
+  // the backend yet, says so plainly instead of pretending it saved.
+  async function uploadExitScreenshot(event) {
+    const file = event.target.files && event.target.files[0];
+    const statusEl = document.getElementById('journal-exit-screenshot-status');
+    if (!file || !statusEl) return;
+    statusEl.style.color = 'var(--text-secondary)';
+    statusEl.textContent = 'Uploading...';
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const data = await apiFetchMultipart('/api/v1/chart/upload-screenshot', { method: 'POST', body: form });
+      if (data.url) {
+        pendingExitScreenshotUrl = data.url;
+        statusEl.style.color = 'var(--green)';
+        statusEl.textContent = 'Screenshot attached -- will be saved with this trade.';
+        const journal = getCurrentJournal();
+        const existing = state.editingId ? journal.find(function (e) { return e.id === state.editingId; }) : null;
+        renderJournalScreenshots({ screenshots: buildScreenshotsForSave(existing ? existing.screenshots : []) });
+      } else {
+        statusEl.style.color = 'var(--text-muted)';
+        statusEl.textContent = data.error
+          ? ('Could not save screenshot: ' + data.error)
+          : "Screenshot storage isn't configured on the backend yet (Cloudinary) -- nothing was saved.";
+      }
+    } catch (e) {
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = 'Error: ' + e.message;
+    }
+  }
+
   async function runTradeReview() {
     const el = document.getElementById('ai-review-output');
     if (!el) return;
@@ -5088,15 +5795,21 @@ if ('serviceWorker' in navigator) {
     const body = {
       pair: (document.getElementById('j-pair').value || '').trim() || null,
       direction: document.getElementById('j-direction').value,
+      asset: document.getElementById('j-asset') ? (document.getElementById('j-asset').value || null) : null,
       entry: numOrNull(document.getElementById('j-entry').value),
       exit: numOrNull(exit),
+      sl: numOrNull(document.getElementById('j-sl') ? document.getElementById('j-sl').value : null),
+      tp: numOrNull(document.getElementById('j-tp') ? document.getElementById('j-tp').value : null),
+      lots: numOrNull(document.getElementById('j-lots') ? document.getElementById('j-lots').value : null),
       pnl: numOrNull(document.getElementById('j-pnl').value),
       rr: numOrNull(document.getElementById('j-rr').value),
       rulesFollowed: document.getElementById('j-rules-followed').value,
       workedTags: (typeof selectedWorkedTags !== 'undefined') ? [...selectedWorkedTags] : [],
       failedTags: (typeof selectedFailedTags !== 'undefined') ? [...selectedFailedTags] : [],
       exitReason: document.getElementById('j-exit-reason').value || null,
+      h4Trend: document.getElementById('j-trend') ? (document.getElementById('j-trend').value || null) : null,
       h4PoiType: document.getElementById('j-poi').value || null,
+      session: document.getElementById('j-session') ? (document.getElementById('j-session').value || null) : null,
       notes: document.getElementById('j-notes').value || null,
     };
     try {
@@ -5105,7 +5818,15 @@ if ('serviceWorker' in navigator) {
         '<div class="review-item"><strong>' + escapeHtml(data.headline) + '</strong></div>' +
         (data.whatWorked.length ? '<div class="review-item" style="color:var(--green)">✓ ' + data.whatWorked.map(escapeHtml).join('<br>✓ ') + '</div>' : '') +
         (data.whatWentWrong.length ? '<div class="review-item" style="color:var(--red)">✗ ' + data.whatWentWrong.map(escapeHtml).join('<br>✗ ') + '</div>' : '') +
-        '<div class="review-item"><strong>Lesson:</strong> ' + escapeHtml(data.lesson) + '</div>';
+        '<div class="review-item"><strong>Lesson:</strong> ' + escapeHtml(data.lesson) + '</div>' +
+        renderLessonSection({
+          hasEnoughHistory: data.hasEnoughHistory,
+          sampleSize: data.similarSampleSize,
+          wins: data.similarWins,
+          losses: data.similarLosses,
+          lessons: data.lessons,
+          patterns: data.patterns,
+        });
     } catch (e) {
       el.textContent = 'Error: ' + e.message;
     }
@@ -5139,6 +5860,94 @@ if ('serviceWorker' in navigator) {
     }
   }
 
+  // Manually-added news events -- always checked alongside the automatic
+  // calendar, and still checked even when that calendar isn't configured
+  // (placeholder mode) or is erroring (e.g. a missing/expired JBlanked or
+  // Finnhub API key), since this doesn't depend on the backend at all.
+  const MANUAL_NEWS_KEY = 'te_manual_news_events';
+
+  function getManualNewsEvents() {
+    try {
+      const raw = localStorage.getItem(MANUAL_NEWS_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function setManualNewsEvents(list) {
+    localStorage.setItem(MANUAL_NEWS_KEY, JSON.stringify(list));
+  }
+
+  function renderManualNewsList() {
+    const el = document.getElementById('ai-news-manual-list');
+    if (!el) return;
+    const list = getManualNewsEvents();
+    if (!list.length) {
+      el.innerHTML = '<div style="font-size:0.78rem;color:var(--text-muted);">No manual events added yet.</div>';
+      return;
+    }
+    el.innerHTML = list.map(function (ev, i) {
+      const when = new Date(ev.time);
+      const whenStr = isNaN(when) ? ev.time : when.toLocaleString();
+      return '<div class="review-item" style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;">' +
+        '<span>' + escapeHtml(ev.event) + (ev.currency ? ' (' + escapeHtml(ev.currency) + ')' : '') + ' &middot; ' + escapeHtml(ev.impact) + ' &middot; ' + escapeHtml(whenStr) + '</span>' +
+        '<span onclick="aiRemoveManualNewsEvent(' + i + ')" style="cursor:pointer;color:var(--red);flex-shrink:0;">&times;</span>' +
+      '</div>';
+    }).join('');
+  }
+
+  window.aiAddManualNewsEvent = function () {
+    const nameInput = document.getElementById('ai-news-manual-name');
+    const currencyInput = document.getElementById('ai-news-manual-currency');
+    const impactInput = document.getElementById('ai-news-manual-impact');
+    const timeInput = document.getElementById('ai-news-manual-time');
+    const name = nameInput.value.trim();
+    const timeVal = timeInput.value;
+    if (!name || !timeVal) {
+      if (typeof showToast === 'function') showToast('Enter an event name and date/time.', 'error');
+      return;
+    }
+    const iso = new Date(timeVal).toISOString();
+    const list = getManualNewsEvents();
+    list.push({ event: name, currency: currencyInput.value.trim().toUpperCase(), impact: impactInput.value, time: iso });
+    list.sort(function (a, b) { return new Date(a.time) - new Date(b.time); });
+    setManualNewsEvents(list);
+    renderManualNewsList();
+    nameInput.value = '';
+    currencyInput.value = '';
+    timeInput.value = '';
+    if (typeof showToast === 'function') showToast('News event added.', 'success');
+    runNewsCheck();
+  };
+
+  window.aiRemoveManualNewsEvent = function (index) {
+    const list = getManualNewsEvents();
+    list.splice(index, 1);
+    setManualNewsEvents(list);
+    renderManualNewsList();
+    runNewsCheck();
+  };
+
+  const IMPACT_RANK = { low: 1, medium: 2, high: 3 };
+
+  function matchingManualEvents(bufferMinutes, currencies, minImpact) {
+    const minRank = IMPACT_RANK[minImpact] || 1;
+    const now = new Date();
+    return getManualNewsEvents().filter(function (ev) {
+      const t = new Date(ev.time);
+      if (isNaN(t)) return false;
+      const minutesAway = (t - now) / 60000;
+      if (minutesAway < -5 || minutesAway > bufferMinutes) return false; // small grace window for "just happened"
+      if (currencies && currencies.length && ev.currency && currencies.indexOf(ev.currency) === -1) return false;
+      const rank = IMPACT_RANK[(ev.impact || '').toLowerCase()] || 1;
+      return rank >= minRank;
+    }).map(function (ev) {
+      return { event: ev.event, currency: ev.currency, impact: ev.impact, minutesAway: Math.round((new Date(ev.time) - now) / 60000), manual: true };
+    });
+  }
+
   async function runNewsCheck() {
     const errorEl = document.getElementById('ai-news-error');
     const el = document.getElementById('ai-news-output');
@@ -5146,31 +5955,43 @@ if ('serviceWorker' in navigator) {
     // LIVE: always checks from right now, no manual "planned trade time"
     // input needed anymore.
     const buffer = parseInt(document.getElementById('ai-news-buffer').value, 10);
+    const bufferMinutes = isNaN(buffer) ? 60 : buffer;
     const currenciesRaw = document.getElementById('ai-news-currencies').value.trim();
     const currencies = currenciesRaw ? currenciesRaw.split(',').map(function (s) { return s.trim().toUpperCase(); }).filter(Boolean) : null;
     const minImpact = document.getElementById('ai-news-min-impact').value;
 
+    const manualMatches = matchingManualEvents(bufferMinutes, currencies, minImpact);
+
     const body = {
       plannedTime: new Date().toISOString(),
-      bufferMinutes: isNaN(buffer) ? 60 : buffer,
+      bufferMinutes: bufferMinutes,
       currencies: currencies,
       minImpact: minImpact,
     };
+
+    let apiEvents = [], apiWarnings = [], apiErrorMsg = null;
     try {
       const data = await apiFetch('/api/v1/news/check-calendar', { method: 'POST', body: JSON.stringify(body) });
-      const statusColor = data.hasHighImpactNearby ? 'var(--red)' : 'var(--green)';
-      const statusText = data.hasHighImpactNearby ? 'News nearby — consider waiting' : 'Clear to trade (no matching news nearby)';
-      el.innerHTML =
-        '<div class="review-item"><strong style="color:' + statusColor + ';">' + statusText + '</strong></div>' +
-        (data.matchingEvents.length
-          ? data.matchingEvents.map(function (ev) {
-              return '<div class="review-item">' + escapeHtml(ev.event) + ' (' + escapeHtml(ev.currency) + ', ' + escapeHtml(ev.impact) + ') — ' + ev.minutesAway + ' min away</div>';
-            }).join('')
-          : '') +
-        (data.warnings.length ? '<div class="review-item" style="color:var(--text-muted);font-size:0.8rem;">' + data.warnings.map(escapeHtml).join('<br>') + '</div>' : '');
+      apiEvents = data.matchingEvents || [];
+      apiWarnings = data.warnings || [];
     } catch (e) {
-      errorEl.textContent = 'Error: ' + e.message;
+      // Don't let the automatic calendar's failure hide manually-added
+      // events -- those don't depend on the backend at all. Show a short
+      // note instead of the raw error/JSON dump.
+      apiErrorMsg = e.message;
     }
+
+    const allEvents = apiEvents.concat(manualMatches);
+    const statusColor = allEvents.length ? 'var(--red)' : 'var(--green)';
+    const statusText = allEvents.length ? 'News nearby — consider waiting' : 'Clear to trade (no matching news nearby)';
+
+    el.innerHTML =
+      '<div class="review-item"><strong style="color:' + statusColor + ';">' + statusText + '</strong></div>' +
+      allEvents.map(function (ev) {
+        return '<div class="review-item">' + escapeHtml(ev.event) + (ev.currency ? ' (' + escapeHtml(ev.currency) + ', ' + escapeHtml(ev.impact) + ')' : ' (' + escapeHtml(ev.impact) + ')') + ' — ' + ev.minutesAway + ' min away' + (ev.manual ? ' <span style="color:var(--text-muted);font-size:0.72rem;">(manual)</span>' : '') + '</div>';
+      }).join('') +
+      (apiWarnings.length ? '<div class="review-item" style="color:var(--text-muted);font-size:0.8rem;">' + apiWarnings.map(escapeHtml).join('<br>') + '</div>' : '') +
+      (apiErrorMsg ? '<div class="review-item" style="color:var(--text-muted);font-size:0.78rem;">Automatic calendar unavailable right now -- showing manually-added events only. (' + escapeHtml(apiErrorMsg.slice(0, 160)) + ')</div>' : '');
   }
 
   // LIVE Session & News: runs both on load and every 60s automatically,
@@ -5434,6 +6255,8 @@ if ('serviceWorker' in navigator) {
   window.aiClearAllTrades = aiClearAllTrades;
   window.aiImportMt5Trades = importMt5Trades;
   window.aiLoadCoach = loadCoachDeepDive;
+  window.aiLoadPlaybook = loadPlaybook;
+  window.aiLoadEdgePatterns = loadEdgePatterns;
   window.aiRunPretrade = runPretradeCheck;
   window.aiLogPretradeSetup = logPretradeSetup;
   window.aiRunChartAnalysis = runChartAnalysis;
@@ -5443,6 +6266,22 @@ if ('serviceWorker' in navigator) {
   window.aiRunNewsCheck = runNewsCheck;
   window.aiCheckMlReadiness = aiCheckMlReadiness;
   window.aiTrainMlModel = aiTrainMlModel;
+  // Sprint 20 Phase 3 -- this whole script is wrapped in the IIFE above,
+  // so these are otherwise invisible to the OTHER <script> block (the
+  // one with renderJournal/openJournalModal/saveJournalEntry/
+  // showSimilarTradesForRow), which needs to call them directly (not
+  // through an "ai..." onclick-style alias) from openJournalModal() and
+  // showSimilarTradesForRow(). Exposing them on window lets that other
+  // script's plain, unqualified references to these names resolve
+  // correctly (classic <script> tags share one global object).
+  window.apiFetch = apiFetch;
+  window.renderSimilarTradesCards = renderSimilarTradesCards;
+  window.renderJournalScreenshots = renderJournalScreenshots;
+  window.loadTradeDetailInsight = loadTradeDetailInsight;
+  // Sprint 20 Phase 5 -- showSimilarTradesForRow (the OTHER script
+  // block) calls this bare, same cross-block-scoping fix as the three
+  // above.
+  window.renderCurrentSetupScreenshotHtml = renderCurrentSetupScreenshotHtml;
 
   document.addEventListener('DOMContentLoaded', function () {
     const input = document.getElementById('ai-api-base-input');
@@ -5458,6 +6297,7 @@ if ('serviceWorker' in navigator) {
     }
 
     // LIVE Session & News init -- starts immediately, no button
+    renderManualNewsList();
     startSessionNewsLive();
 
     // Sprint 18: LIVE Margin Buffer init -- starts immediately, no button
